@@ -1,5 +1,17 @@
 # Changelog
 
+## [2026.8.29](https://github.com/yezhiming1/midea-lan/compare/midea-lan-v2026.8.28...midea-lan-v2026.8.29) (2026-08-28)
+
+
+### Features
+
+* **ac:** add exact-model person-airflow and smart-light controls for 220F4047 subtype 8
+
+
+### Bug Fixes
+
+* **ac:** send mutually exclusive wind-toward/wind-avoid flags in one protocol message
+
 ## [2026.8.28](https://github.com/yezhiming1/midea-lan/compare/midea-lan-v2026.8.0...midea-lan-v2026.8.28) (2026-08-28)
 
 
