@@ -6,7 +6,13 @@ from unittest.mock import patch
 import pytest
 
 from midealan.const import ProtocolVersion
-from midealan.devices.ac import DeviceAttributes, MideaACDevice
+from midealan.devices.ac import (
+    PERSON_AIRFLOW_AVOID,
+    PERSON_AIRFLOW_OFF,
+    PERSON_AIRFLOW_TOWARD,
+    DeviceAttributes,
+    MideaACDevice,
+)
 from midealan.devices.ac.message import (
     CapabilitiesAdditionalQuery,
     CapabilitiesQuery,
@@ -23,6 +29,7 @@ from midealan.devices.ac.message import (
     NewProtocolNobodyEnergySaveTagQuery,
     NewProtocolQuery,
     NewProtocolSelfCleanQuery,
+    NewProtocolSet,
     NewProtocolTags,
     NewProtocolWindAvoidQuery,
     NewProtocolWindStraightQuery,
@@ -417,6 +424,78 @@ class TestMideaACDevice:
         assert DeviceAttributes.comfort_sleep.value not in other_status
         assert DeviceAttributes.wind_straight.value not in other_status
         assert DeviceAttributes.light_sensitive.value not in other_status
+
+    @pytest.mark.parametrize(
+        ("mode", "toward", "avoid"),
+        [
+            (PERSON_AIRFLOW_OFF, False, False),
+            (PERSON_AIRFLOW_TOWARD, True, False),
+            (PERSON_AIRFLOW_AVOID, False, True),
+        ],
+    )
+    def test_220f4047_person_airflow_control(
+        self,
+        mode: str,
+        toward: bool,
+        avoid: bool,
+    ) -> None:
+        """The exact model sends one mutually exclusive person-airflow command."""
+        device = self._make_device("220F4047", 8)
+
+        with patch.object(device, "build_send") as build_send:
+            device.set_person_airflow_mode(mode)
+
+        message = build_send.call_args.args[0]
+        assert isinstance(message, NewProtocolSet)
+        assert message.wind_straight is toward
+        assert message.wind_avoid is avoid
+        assert bool(message.prompt_tone)
+
+    def test_220f4047_person_airflow_control_rejects_invalid_mode(self) -> None:
+        """An invalid mode cannot produce a device write."""
+        device = self._make_device("220F4047", 8)
+
+        with (
+            patch.object(device, "build_send") as build_send,
+            pytest.raises(ValueError, match="Unsupported person-airflow mode"),
+        ):
+            device.set_person_airflow_mode("sideways")
+
+        build_send.assert_not_called()
+
+    @pytest.mark.parametrize(("enabled", "expected"), [(True, 3), (False, 0)])
+    def test_220f4047_light_sensitive_control(
+        self,
+        enabled: bool,
+        expected: int,
+    ) -> None:
+        """Smart-light control maps the App switch to raw high/off values."""
+        device = self._make_device("220F4047", 8)
+
+        with patch.object(device, "build_send") as build_send:
+            device.set_light_sensitive(enabled)
+
+        message = build_send.call_args.args[0]
+        assert isinstance(message, NewProtocolSet)
+        assert message.light_sensitive == expected
+        assert bool(message.prompt_tone)
+
+    @pytest.mark.parametrize(("model", "subtype"), [("220F4047", 1), ("other", 8)])
+    def test_model_controls_are_gated_by_exact_model(
+        self,
+        model: str,
+        subtype: int,
+    ) -> None:
+        """No unverified model can use the new write APIs."""
+        device = self._make_device(model, subtype)
+
+        with patch.object(device, "build_send") as build_send:
+            with pytest.raises(NotImplementedError):
+                device.set_person_airflow_mode(PERSON_AIRFLOW_TOWARD)
+            with pytest.raises(NotImplementedError):
+                device.set_light_sensitive(True)
+
+        build_send.assert_not_called()
 
     def test_bb_model_builds_distinct_queries_and_attributes(self) -> None:
         """Test verified BB model starts with independent BB queries."""

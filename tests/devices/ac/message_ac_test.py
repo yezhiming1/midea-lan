@@ -474,6 +474,61 @@ class TestNewProtocolSetAngles:
         assert body[5] == 60
 
 
+class TestNewProtocolSetModelControls:
+    """Test model-gated person-airflow and smart-light payloads."""
+
+    @pytest.mark.parametrize(
+        ("attribute", "tag", "value", "expected"),
+        [
+            ("wind_straight", NewProtocolTags.wind_straight, True, 0x01),
+            ("wind_straight", NewProtocolTags.wind_straight, False, 0x00),
+            ("wind_avoid", NewProtocolTags.wind_avoid, True, 0x01),
+            ("wind_avoid", NewProtocolTags.wind_avoid, False, 0x00),
+            ("light_sensitive", NewProtocolTags.light_sensitive, 3, 0x03),
+            ("light_sensitive", NewProtocolTags.light_sensitive, 0, 0x00),
+        ],
+    )
+    def test_single_property_payload(
+        self,
+        attribute: str,
+        tag: NewProtocolTags,
+        value: bool | int,
+        expected: int,
+    ) -> None:
+        """Each model-specific property uses its documented one-byte payload."""
+        message = NewProtocolSet(protocol_version=ProtocolVersion.V1)
+        setattr(message, attribute, value)
+
+        body = message.body
+
+        assert body[0] == 0xB0
+        assert body[1] == 0x01
+        assert body[2] == tag & 0xFF
+        assert body[3] == tag >> 8
+        assert body[4] == 0x01
+        assert body[5] == expected
+
+    def test_person_airflow_payload_is_atomic(self) -> None:
+        """One message disables the opposite mode while enabling the selected one."""
+        message = NewProtocolSet(protocol_version=ProtocolVersion.V1)
+        message.wind_straight = True
+        message.wind_avoid = False
+
+        assert message.body[1:10] == bytearray(
+            [
+                0x02,
+                0x32,
+                0x00,
+                0x01,
+                0x01,
+                0x33,
+                0x00,
+                0x01,
+                0x00,
+            ],
+        )
+
+
 class TestMessageSubProtocol:
     """Test Message Sub Protocol."""
 

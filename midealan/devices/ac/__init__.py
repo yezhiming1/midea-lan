@@ -14,6 +14,7 @@ from midealan.message import ListTypes
 from .message import (
     C0_DEFAULT_INVALID_OUTDOOR_TEMPERATURE_VALUES,
     C0_DEFAULT_TEMPERATURE_OFFSET,
+    LIGHT_SENSITIVE_ENABLED_VALUE,
     CapabilitiesAdditionalQuery,
     CapabilitiesQuery,
     GroupOneQuery,
@@ -62,6 +63,14 @@ ACQuery = (
 
 # AC mode constants
 DRY_MODE = 3
+PERSON_AIRFLOW_OFF = "off"
+PERSON_AIRFLOW_TOWARD = "toward"
+PERSON_AIRFLOW_AVOID = "avoid"
+PERSON_AIRFLOW_MODES = (
+    PERSON_AIRFLOW_OFF,
+    PERSON_AIRFLOW_TOWARD,
+    PERSON_AIRFLOW_AVOID,
+)
 
 
 class DeviceAttributes(StrEnum):
@@ -161,6 +170,8 @@ class ACModelCapabilities:
     additional_new_protocol_queries: tuple[type[NewProtocolQuery], ...] = ()
     uses_bb_protocol: bool = False
     has_bb_fresh_air: bool = False
+    has_person_airflow_control: bool = False
+    has_light_sensitive_control: bool = False
     c0_indoor_temperature_offset: int = C0_DEFAULT_TEMPERATURE_OFFSET
     c0_invalid_outdoor_temperature_values: frozenset[int] = (
         C0_DEFAULT_INVALID_OUTDOOR_TEMPERATURE_VALUES
@@ -198,6 +209,8 @@ AC_MODEL_CAPABILITIES = {
             NewProtocolLightSensitiveQuery,
             NewProtocolFilterQuery,
         ),
+        has_person_airflow_control=True,
+        has_light_sensitive_control=True,
         c0_indoor_temperature_offset=0,
         c0_invalid_outdoor_temperature_values=frozenset(
             {MODEL_220F4047_C0_OUTDOOR_TEMPERATURE_PLACEHOLDER},
@@ -997,6 +1010,34 @@ class MideaACDevice(MideaDevice):
                 self.update_all(
                     {DeviceAttributes.self_clean.value: optimistic_self_clean},
                 )
+
+    def set_person_airflow_mode(self, mode: str) -> None:
+        """Set the mutually exclusive person-airflow mode for a verified model."""
+        if not self._model_capabilities.has_person_airflow_control:
+            raise NotImplementedError(
+                "Person-airflow control is unsupported for "
+                f"{self.model}/{self.subtype}",
+            )
+        if mode not in PERSON_AIRFLOW_MODES:
+            raise ValueError(f"Unsupported person-airflow mode: {mode}")
+
+        message = NewProtocolSet(self._message_protocol_version)
+        message.wind_straight = mode == PERSON_AIRFLOW_TOWARD
+        message.wind_avoid = mode == PERSON_AIRFLOW_AVOID
+        message.prompt_tone = self._attributes[DeviceAttributes.prompt_tone]
+        self.build_send(message)
+
+    def set_light_sensitive(self, enabled: bool) -> None:
+        """Set smart-light sensing for an exact model with a verified payload."""
+        if not self._model_capabilities.has_light_sensitive_control:
+            raise NotImplementedError(
+                f"Smart-light control is unsupported for {self.model}/{self.subtype}",
+            )
+
+        message = NewProtocolSet(self._message_protocol_version)
+        message.light_sensitive = LIGHT_SENSITIVE_ENABLED_VALUE if enabled else 0
+        message.prompt_tone = self._attributes[DeviceAttributes.prompt_tone]
+        self.build_send(message)
 
     def set_target_temperature(
         self,
