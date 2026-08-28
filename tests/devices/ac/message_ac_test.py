@@ -7,6 +7,7 @@ from midealan.crc8 import calculate
 from midealan.devices.ac.message import (
     A1_MIN_BODY_LENGTH,
     CapabilitiesQuery,
+    CapabilityBody,
     GroupDataQuery,
     GroupOneQuery,
     GroupSevenQuery,
@@ -21,19 +22,32 @@ from midealan.devices.ac.message import (
     MessageSet,
     MessageSubProtocol,
     MessageSubProtocolSet,
+    NewProtocolComfortSleepQuery,
+    NewProtocolFilterQuery,
+    NewProtocolLightSensitiveQuery,
+    NewProtocolNobodyEnergySaveQuery,
+    NewProtocolNobodyEnergySaveTagQuery,
     NewProtocolQuery,
     NewProtocolSelfCleanQuery,
     NewProtocolSet,
     NewProtocolTags,
+    NewProtocolWindAvoidQuery,
+    NewProtocolWindStraightQuery,
     PowerFormats,
     PowerQuery,
+    PropertiesBody,
     SubProtocolFreshAirSet,
     SubProtocolQuery10,
     SubProtocolQuery11,
     SubProtocolQuery30,
     ToggleDisplay,
 )
-from midealan.message import ListTypes, MessageBase, MessageType
+from midealan.message import (
+    ListTypes,
+    MessageBase,
+    MessageType,
+    NewProtocolMessageBody,
+)
 
 
 class TestMessageACBase:
@@ -350,6 +364,35 @@ class TestNewProtocolQuery:
                 NewProtocolTags.self_clean >> 8,
             ],
         )
+        assert msg.body[:-2] == expected_body
+
+    @pytest.mark.parametrize(
+        ("query_type", "tag"),
+        [
+            (NewProtocolComfortSleepQuery, NewProtocolTags.comfort_sleep),
+            (NewProtocolWindStraightQuery, NewProtocolTags.wind_straight),
+            (NewProtocolWindAvoidQuery, NewProtocolTags.wind_avoid),
+            (
+                NewProtocolNobodyEnergySaveQuery,
+                NewProtocolTags.nobody_energy_save,
+            ),
+            (
+                NewProtocolNobodyEnergySaveTagQuery,
+                NewProtocolTags.nobody_energy_save_tag,
+            ),
+            (NewProtocolLightSensitiveQuery, NewProtocolTags.light_sensitive),
+            (NewProtocolFilterQuery, NewProtocolTags.filter_level),
+        ],
+    )
+    def test_optional_feature_queries_are_isolated(
+        self,
+        query_type: type[NewProtocolQuery],
+        tag: NewProtocolTags,
+    ) -> None:
+        """Test every optional feature uses its own single-property query."""
+        msg = query_type(protocol_version=ProtocolVersion.V1)
+        expected_body = bytearray([0xB1, 0x01, tag & 0xFF, tag >> 8])
+
         assert msg.body[:-2] == expected_body
 
 
@@ -692,6 +735,32 @@ class TestMessageSet:
         assert msg.body[:-2] == expected_body
 
 
+class TestReleasedBaseCompatibility:
+    """Test compatibility with the released 2026.8.0 base constructor."""
+
+    def test_ac_bodies_forward_body_type(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Forward the required body-type argument for B0/B1 and B5 bodies."""
+        calls: list[int] = []
+        original_init = NewProtocolMessageBody.__init__
+
+        def released_init(
+            instance: NewProtocolMessageBody,
+            body: bytearray,
+            body_type: int,
+        ) -> None:
+            calls.append(body_type)
+            original_init(instance, body, body_type)
+
+        monkeypatch.setattr(NewProtocolMessageBody, "__init__", released_init)
+        PropertiesBody(bytearray([ListTypes.B1, 0]))
+        CapabilityBody(bytearray([ListTypes.B5, 0]))
+
+        assert calls == [ListTypes.B1, ListTypes.B5]
+
+
 class TestMessageACResponse:
     """Test Message AC Response."""
 
@@ -712,6 +781,19 @@ class TestMessageACResponse:
                 0x05,
             ],
         )
+
+    @staticmethod
+    def _properties_body(
+        *properties: tuple[NewProtocolTags, bytes | bytearray],
+    ) -> bytearray:
+        """Build a B1 response body with five-byte property headers."""
+        body = bytearray([0xB1, len(properties)])
+        for tag, value in properties:
+            body.extend([tag & 0xFF, tag >> 8, 0x00, len(value)])
+            body.extend(value)
+        # MessageResponse strips the final byte as the frame checksum.
+        body.append(0x00)
+        return body
 
     def test_message_notify2_a0(self) -> None:
         """Test Message parse notify2 A0."""
@@ -1812,6 +1894,50 @@ class TestMessageACResponse:
         response = MessageACResponse(self.header + body)
         assert hasattr(response, "sound")
         assert response.sound is False
+
+    def test_message_b1_220f4047_optional_feature_states(self) -> None:
+        """Test the model-specific optional feature values are decoded."""
+        self.header[9] = 0x03
+        filter_data = bytearray(13)
+        filter_data[1] = 2
+        filter_data[10] = 53
+        body = self._properties_body(
+            (
+                NewProtocolTags.comfort_sleep,
+                bytes([0x00, 0x0A, *([48] * 10)]),
+            ),
+            (NewProtocolTags.wind_straight, bytes([0x02])),
+            (NewProtocolTags.wind_avoid, bytes([0x00])),
+            (NewProtocolTags.nobody_energy_save, bytes(6)),
+            (NewProtocolTags.nobody_energy_save_tag, bytes([0x01])),
+            (NewProtocolTags.light_sensitive, bytes([0x01])),
+            (NewProtocolTags.filter_level, filter_data),
+        )
+
+        response = MessageACResponse(self.header + body)
+        parsed = vars(response)
+
+        assert parsed["comfort_sleep"] is False
+        assert parsed["wind_straight"] is False
+        assert parsed["yb_wind_avoid"] is True
+        assert parsed["wind_avoid"] is False
+        assert parsed["nobody_energy_save"] is False
+        assert parsed["nobody_energy_save_tag"] == 1
+        assert parsed["light_sensitive"] == 1
+        assert parsed["filter_level"] == 2
+        assert parsed["filter_value"] == 53
+
+    def test_message_b1_filter_short_payload_is_ignored(self) -> None:
+        """Test a truncated filter payload cannot publish shifted values."""
+        self.header[9] = 0x03
+        body = self._properties_body(
+            (NewProtocolTags.filter_level, bytes(range(10))),
+        )
+
+        response = MessageACResponse(self.header + body)
+
+        assert not hasattr(response, "filter_level")
+        assert not hasattr(response, "filter_value")
 
     def test_message_b5_notify2_0x7e_temperature_parse(self) -> None:
         """Test 0x7e tag parsing for the model-22013279 temperature layout."""

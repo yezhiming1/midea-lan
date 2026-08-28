@@ -16,9 +16,16 @@ from midealan.devices.ac.message import (
     GroupZeroQuery,
     HumidityQuery,
     MessageQuery,
+    NewProtocolComfortSleepQuery,
+    NewProtocolFilterQuery,
+    NewProtocolLightSensitiveQuery,
+    NewProtocolNobodyEnergySaveQuery,
+    NewProtocolNobodyEnergySaveTagQuery,
     NewProtocolQuery,
     NewProtocolSelfCleanQuery,
     NewProtocolTags,
+    NewProtocolWindAvoidQuery,
+    NewProtocolWindStraightQuery,
     PowerFormats,
     PowerQuery,
     SubProtocolFreshAirSet,
@@ -29,6 +36,12 @@ from midealan.devices.ac.message import (
     ToggleDisplay,
 )
 from midealan.message import ListTypes, MessageBase
+
+# C0 body from the public capture in
+# https://github.com/wuwentao/midea_ac_lan/issues/998
+MODEL_220F4047_C0_BODY = bytes.fromhex(
+    "c00150667f7f0000000c002e200b0003000000000000000058020000f0ff533d",
+)
 
 
 class TestMideaACDevice:
@@ -92,6 +105,17 @@ class TestMideaACDevice:
         frame = header + body
         frame.append(MessageBase.checksum(frame[1:]))
         return bytes(frame)
+
+    @staticmethod
+    def _new_protocol_response(
+        *properties: tuple[NewProtocolTags, bytes | bytearray],
+    ) -> bytes:
+        """Wrap B1 properties in a complete AC query frame."""
+        body = bytearray([ListTypes.B1, len(properties)])
+        for tag, value in properties:
+            body.extend([tag & 0xFF, tag >> 8, 0x00, len(value)])
+            body.extend(value)
+        return TestMideaACDevice._response(body)
 
     def test_customize_accepts_bcd_energy_binary_power_format(self) -> None:
         """Test customize can select BCD energy with binary realtime power."""
@@ -341,6 +365,59 @@ class TestMideaACDevice:
         new_protocol_query = next(q for q in queries if isinstance(q, NewProtocolQuery))
         assert NewProtocolTags.rate_select in new_protocol_query._body
 
+    def test_220f4047_builds_isolated_read_only_feature_probes(self) -> None:
+        """Test the exact model exposes and independently queries probe fields."""
+        device = self._make_device("220F4047", 8)
+        probe_attributes = {
+            DeviceAttributes.comfort_sleep,
+            DeviceAttributes.filter_level,
+            DeviceAttributes.filter_value,
+            DeviceAttributes.light_sensitive,
+            DeviceAttributes.nobody_energy_save,
+            DeviceAttributes.nobody_energy_save_tag,
+            DeviceAttributes.wind_avoid,
+            DeviceAttributes.wind_straight,
+            DeviceAttributes.yb_wind_avoid,
+        }
+        probe_query_types = {
+            NewProtocolComfortSleepQuery,
+            NewProtocolFilterQuery,
+            NewProtocolLightSensitiveQuery,
+            NewProtocolNobodyEnergySaveQuery,
+            NewProtocolNobodyEnergySaveTagQuery,
+            NewProtocolWindAvoidQuery,
+            NewProtocolWindStraightQuery,
+        }
+
+        queries = device.build_query()
+
+        assert probe_attributes <= device.attributes.keys()
+        assert probe_query_types <= {type(query) for query in queries}
+        with patch.object(device, "build_send") as build_send:
+            for attribute in probe_attributes:
+                device.set_attribute(attribute, True)
+            build_send.assert_not_called()
+
+    def test_220f4047_probe_response_is_gated_by_exact_model(self) -> None:
+        """Test parsed probe values are published only for model/subtype 8."""
+        response = self._new_protocol_response(
+            (NewProtocolTags.comfort_sleep, bytes([0x00])),
+            (NewProtocolTags.wind_straight, bytes([0x01])),
+            (NewProtocolTags.light_sensitive, bytes([0x01])),
+        )
+
+        device = self._make_device("220F4047", 8)
+        status = device.process_message(response)
+        assert status[DeviceAttributes.comfort_sleep.value] is False
+        assert status[DeviceAttributes.wind_straight.value] is True
+        assert status[DeviceAttributes.light_sensitive.value] == 1
+
+        other = self._make_device("220F4047", 1)
+        other_status = other.process_message(response)
+        assert DeviceAttributes.comfort_sleep.value not in other_status
+        assert DeviceAttributes.wind_straight.value not in other_status
+        assert DeviceAttributes.light_sensitive.value not in other_status
+
     def test_bb_model_builds_distinct_queries_and_attributes(self) -> None:
         """Test verified BB model starts with independent BB queries."""
         device = self._make_device("23096633", 1)
@@ -393,6 +470,44 @@ class TestMideaACDevice:
                 True,
             )
             build_send.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("decimal", "expected_temperature"),
+        [(0x03, 23.3), (0x08, 23.8)],
+    )
+    def test_220f4047_c0_temperature_uses_model_specific_encoding(
+        self,
+        decimal: int,
+        expected_temperature: float,
+    ) -> None:
+        """Decode the C0 temperatures reported by model 220F4047 subtype 8."""
+        device = self._make_device("220F4047", 8)
+        body = bytearray(MODEL_220F4047_C0_BODY)
+        body[15] = decimal
+
+        status = device.process_message(self._response(body))
+
+        assert status[DeviceAttributes.indoor_temperature.value] == expected_temperature
+        assert status[DeviceAttributes.outdoor_temperature.value] is None
+
+    @pytest.mark.parametrize(
+        ("model", "subtype"),
+        [("220F4047", 1), ("other", 8)],
+    )
+    def test_220f4047_c0_temperature_encoding_is_exactly_gated(
+        self,
+        model: str,
+        subtype: int,
+    ) -> None:
+        """Keep the standard C0 decoder for every other model/subtype pair."""
+        device = self._make_device(model, subtype)
+
+        status = device.process_message(
+            self._response(bytearray(MODEL_220F4047_C0_BODY)),
+        )
+
+        assert status[DeviceAttributes.indoor_temperature.value] == -2.3
+        assert status[DeviceAttributes.outdoor_temperature.value] == -9.0
 
     def test_actual_frequency_only_model_gating(self) -> None:
         """Test the naturally detected BB model exposes only actual frequency."""
