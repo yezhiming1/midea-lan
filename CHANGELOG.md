@@ -1,5 +1,18 @@
 # Changelog
 
+## [2026.8.28](https://github.com/yezhiming1/midea-lan/compare/midea-lan-v2026.8.0...midea-lan-v2026.8.28) (2026-08-28)
+
+
+### Features
+
+* **ac:** add read-only 220F4047 capability probes for airflow, sleep, light sensing, filter, and energy-saving state
+
+
+### Bug Fixes
+
+* **ac:** decode C0 indoor and outdoor temperatures for model 220F4047
+* **protocol:** retain compatibility with the released 2026.8.0 new-protocol constructor
+
 ## [2026.8.0](https://github.com/wuwentao/midea-lan/compare/midea-lan-v2026.7.0...midea-lan-v2026.8.0) (2026-08-12)
 
 
