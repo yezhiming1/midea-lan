@@ -7,6 +7,7 @@ from midealan.crc8 import calculate
 from midealan.devices.ac.message import (
     A1_MIN_BODY_LENGTH,
     CapabilitiesQuery,
+    CapabilityBody,
     GroupDataQuery,
     GroupOneQuery,
     GroupSevenQuery,
@@ -34,13 +35,19 @@ from midealan.devices.ac.message import (
     NewProtocolWindStraightQuery,
     PowerFormats,
     PowerQuery,
+    PropertiesBody,
     SubProtocolFreshAirSet,
     SubProtocolQuery10,
     SubProtocolQuery11,
     SubProtocolQuery30,
     ToggleDisplay,
 )
-from midealan.message import ListTypes, MessageBase, MessageType
+from midealan.message import (
+    ListTypes,
+    MessageBase,
+    MessageType,
+    NewProtocolMessageBody,
+)
 
 
 class TestMessageACBase:
@@ -726,6 +733,32 @@ class TestMessageSet:
         expected_body[21] = 0x80
         expected_body[22] = 0x01
         assert msg.body[:-2] == expected_body
+
+
+class TestReleasedBaseCompatibility:
+    """Test compatibility with the released 2026.8.0 base constructor."""
+
+    def test_ac_bodies_forward_body_type(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Forward the required body-type argument for B0/B1 and B5 bodies."""
+        calls: list[int] = []
+        original_init = NewProtocolMessageBody.__init__
+
+        def released_init(
+            instance: NewProtocolMessageBody,
+            body: bytearray,
+            body_type: int,
+        ) -> None:
+            calls.append(body_type)
+            original_init(instance, body, body_type)
+
+        monkeypatch.setattr(NewProtocolMessageBody, "__init__", released_init)
+        PropertiesBody(bytearray([ListTypes.B1, 0]))
+        CapabilityBody(bytearray([ListTypes.B5, 0]))
+
+        assert calls == [ListTypes.B1, ListTypes.B5]
 
 
 class TestMessageACResponse:

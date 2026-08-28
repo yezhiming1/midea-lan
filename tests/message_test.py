@@ -427,6 +427,14 @@ class TestNewProtocolMessageBody:
         )
         assert body.parse() == {0x1234: bytearray([0xAA])}
 
+    def test_parse_with_explicit_body_type(self) -> None:
+        """Accept the body-type argument used by the released 2026.8.0 API."""
+        body = NewProtocolMessageBody(
+            bytearray([0xB5, 0x01, 0x34, 0x12, 0x01, 0xAA]),
+            ListTypes.B5,
+        )
+        assert body.parse() == {0x1234: bytearray([0xAA])}
+
     def test_parse_truncated_param(self) -> None:
         """Test parse stops when a declared param is missing."""
         body = NewProtocolMessageBody(

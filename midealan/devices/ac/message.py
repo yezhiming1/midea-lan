@@ -1134,7 +1134,10 @@ class PropertiesBody(NewProtocolMessageBody):
         new_protocol_temperature: bool = False,
     ) -> None:
         """Initialize AC BX message body."""
-        super().__init__(body)
+        # PyPI 2026.8.0 still requires the body-type argument, while current
+        # source derives it from the body. Pass it explicitly so an AC parser
+        # built from this tree works with either base implementation.
+        super().__init__(body, body[0])
 
         params = self.parse()
         if NewProtocolTags.indirect_wind in params:
@@ -1282,7 +1285,8 @@ class CapabilityBody(NewProtocolMessageBody):
 
     def __init__(self, body: bytearray) -> None:
         """Initialize AC B5 capability response message body."""
-        super().__init__(body)
+        # Keep compatibility with the released 2026.8.0 base constructor.
+        super().__init__(body, body[0])
 
         params = self.parse()
         # parse b5 protocol, github issue https://github.com/wuwentao/midea_ac_lan/issues/673
