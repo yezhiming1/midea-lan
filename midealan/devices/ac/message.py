@@ -101,6 +101,14 @@ NEW_PROTOCOL_LEGACY_SETPOINT_BYTE = 3
 NEW_PROTOCOL_INDOOR_TEMPERATURE_BYTE = 40
 NEW_PROTOCOL_INDOOR_TEMPERATURE_DECIMAL_BYTE = 41
 
+# Model-specific optional property payloads used by the 220F4047 read-only
+# probe. Keep the values raw unless their wire meaning is unambiguous.
+WIND_STRAIGHT_VALUE = 0x01
+YB_WIND_AVOID_VALUE = 0x02
+FILTER_LEVEL_INDEX = 1
+FILTER_VALUE_INDEX = 10
+FILTER_MIN_PAYLOAD_LENGTH = FILTER_VALUE_INDEX + 1
+
 # B5 capability value semantics (reverse-engineered; see _parse_capabilities).
 # The raw byte of each capability is not a 0/1 flag; each has its own value set.
 B5_HEAT_MODE_VALUES = frozenset({1, 2, 4, 6, 7, 9, 10, 11, 12, 13})
@@ -137,6 +145,7 @@ class NewProtocolTags(IntEnum):
 
     wind_ud_angle = 0x0009
     wind_lr_angle = 0x000A
+    comfort_sleep = 0x0011
     indoor_humidity = 0x0015  # queryType == "indoor_humidity"
     screen_display = 0x0017
     breezeless = 0x0018  # queryType == "fn_no_wind_sense"
@@ -185,7 +194,9 @@ class NewProtocolTags(IntEnum):
     # AC outdoor silent mode (PortaSplit)
     out_silent = 0x00CD
     ieco_switch = 0x00E3
+    nobody_energy_save_tag = 0x00FA
     pre_cool_hot = 0x0201
+    light_sensitive = 0x0208
     pm25_value = 0x020B
     b5_wind_speed = 0x0210
     b5_eco = 0x0212
@@ -507,6 +518,48 @@ class NewProtocolSelfCleanQuery(NewProtocolQuery):
     """
 
     _query_params = (NewProtocolTags.self_clean,)
+
+
+class NewProtocolComfortSleepQuery(NewProtocolQuery):
+    """Query the comfort-sleep state independently."""
+
+    _query_params = (NewProtocolTags.comfort_sleep,)
+
+
+class NewProtocolWindStraightQuery(NewProtocolQuery):
+    """Query the wind-toward-person state independently."""
+
+    _query_params = (NewProtocolTags.wind_straight,)
+
+
+class NewProtocolWindAvoidQuery(NewProtocolQuery):
+    """Query the wind-away-from-person state independently."""
+
+    _query_params = (NewProtocolTags.wind_avoid,)
+
+
+class NewProtocolNobodyEnergySaveQuery(NewProtocolQuery):
+    """Query the legacy no-person energy-saving state independently."""
+
+    _query_params = (NewProtocolTags.nobody_energy_save,)
+
+
+class NewProtocolNobodyEnergySaveTagQuery(NewProtocolQuery):
+    """Query the newer no-person energy-saving state independently."""
+
+    _query_params = (NewProtocolTags.nobody_energy_save_tag,)
+
+
+class NewProtocolLightSensitiveQuery(NewProtocolQuery):
+    """Query the smart light-sensing value independently."""
+
+    _query_params = (NewProtocolTags.light_sensitive,)
+
+
+class NewProtocolFilterQuery(NewProtocolQuery):
+    """Query the filter level and cleanliness value independently."""
+
+    _query_params = (NewProtocolTags.filter_level,)
 
 
 class MessageSubProtocol(MessageACBase):
@@ -1116,6 +1169,7 @@ class PropertiesBody(NewProtocolMessageBody):
             self.rate_select = params[NewProtocolTags.rate_select][0]
         if NewProtocolTags.out_silent in params:
             self.out_silent = params[NewProtocolTags.out_silent][0] == OUT_SILENT_VALUE
+        self._parse_optional_feature_states(params)
         if NewProtocolTags.buzzer_all in params:
             self.sound = params[NewProtocolTags.buzzer_all][0] > 0
         if NewProtocolTags.error_code_query in params:
@@ -1132,6 +1186,39 @@ class PropertiesBody(NewProtocolMessageBody):
             )
         ):
             self.has_new_protocol_temperature = True
+
+    def _parse_optional_feature_states(
+        self,
+        params: Mapping[int, bytearray],
+    ) -> None:
+        """Decode the optional states queried by exact-model probes."""
+        if NewProtocolTags.comfort_sleep in params:
+            self.comfort_sleep = params[NewProtocolTags.comfort_sleep][0] > 0
+        if NewProtocolTags.wind_straight in params:
+            wind_straight = params[NewProtocolTags.wind_straight][0]
+            self.wind_straight = wind_straight == WIND_STRAIGHT_VALUE
+            # Some SN8 variants encode wind avoidance as value 2 on tag 0x0032
+            # instead of using the dedicated 0x0033 tag.
+            self.yb_wind_avoid = wind_straight == YB_WIND_AVOID_VALUE
+        if NewProtocolTags.wind_avoid in params:
+            self.wind_avoid = params[NewProtocolTags.wind_avoid][0] > 0
+        if NewProtocolTags.nobody_energy_save in params:
+            self.nobody_energy_save = params[NewProtocolTags.nobody_energy_save][0] > 0
+        if NewProtocolTags.nobody_energy_save_tag in params:
+            # Preserve this newer variant as a raw value until a real-device
+            # capture establishes whether its values are strictly boolean.
+            self.nobody_energy_save_tag = params[
+                NewProtocolTags.nobody_energy_save_tag
+            ][0]
+        if NewProtocolTags.light_sensitive in params:
+            # The model script exposes this byte unchanged. Preserve it so the
+            # first real-device capture can establish its on/off value mapping.
+            self.light_sensitive = params[NewProtocolTags.light_sensitive][0]
+        if NewProtocolTags.filter_level in params:
+            filter_data = params[NewProtocolTags.filter_level]
+            if len(filter_data) >= FILTER_MIN_PAYLOAD_LENGTH:
+                self.filter_level = filter_data[FILTER_LEVEL_INDEX]
+                self.filter_value = filter_data[FILTER_VALUE_INDEX]
 
     def _parse_new_protocol_temperatures(self, data: bytearray) -> bool:
         """Decode setpoint and indoor temperature for model 22013279.

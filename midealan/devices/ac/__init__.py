@@ -25,9 +25,16 @@ from .message import (
     MessageQuery,
     MessageSet,
     MessageSubProtocolSet,
+    NewProtocolComfortSleepQuery,
+    NewProtocolFilterQuery,
+    NewProtocolLightSensitiveQuery,
+    NewProtocolNobodyEnergySaveQuery,
+    NewProtocolNobodyEnergySaveTagQuery,
     NewProtocolQuery,
     NewProtocolSelfCleanQuery,
     NewProtocolSet,
+    NewProtocolWindAvoidQuery,
+    NewProtocolWindStraightQuery,
     PowerQuery,
     SubProtocolFreshAirSet,
     SubProtocolQuery,
@@ -76,6 +83,7 @@ class DeviceAttributes(StrEnum):
     eco_mode = "eco_mode"
     aux_heating = "aux_heating"
     sleep_mode = "sleep_mode"
+    comfort_sleep = "comfort_sleep"
     natural_wind = "natural_wind"
     temp_fahrenheit = "temp_fahrenheit"
     screen_display = "screen_display"
@@ -86,6 +94,10 @@ class DeviceAttributes(StrEnum):
     indoor_temperature = "indoor_temperature"
     outdoor_temperature = "outdoor_temperature"
     indirect_wind = "indirect_wind"
+    wind_straight = "wind_straight"
+    wind_avoid = "wind_avoid"
+    yb_wind_avoid = "yb_wind_avoid"
+    nobody_energy_save = "nobody_energy_save"
     indoor_humidity = "indoor_humidity"
     breezeless = "breezeless"
     fresh_air_power = "fresh_air_power"
@@ -109,7 +121,11 @@ class DeviceAttributes(StrEnum):
     out_silent = "out_silent"
     anion = "anion"
     sound = "sound"
+    light_sensitive = "light_sensitive"
     self_clean = "self_clean"
+    filter_level = "filter_level"
+    filter_value = "filter_value"
+    nobody_energy_save_tag = "nobody_energy_save_tag"
     pmv = "pmv"
     error_code = "error_code"
     # group 1: compressor and refrigerant circuit
@@ -142,6 +158,7 @@ class ACModelCapabilities:
     """Capabilities verified for an exact AC model and subtype."""
 
     attributes: frozenset[DeviceAttributes] = frozenset()
+    additional_new_protocol_queries: tuple[type[NewProtocolQuery], ...] = ()
     uses_bb_protocol: bool = False
     has_bb_fresh_air: bool = False
     c0_indoor_temperature_offset: int = C0_DEFAULT_TEMPERATURE_OFFSET
@@ -156,6 +173,31 @@ DEFAULT_AC_MODEL_CAPABILITIES = ACModelCapabilities()
 # hidden from commands whose bytes may have a different meaning on other firmware.
 AC_MODEL_CAPABILITIES = {
     ("220F4047", 8): ACModelCapabilities(
+        attributes=frozenset(
+            {
+                DeviceAttributes.comfort_sleep,
+                DeviceAttributes.filter_level,
+                DeviceAttributes.filter_value,
+                DeviceAttributes.light_sensitive,
+                DeviceAttributes.nobody_energy_save,
+                DeviceAttributes.nobody_energy_save_tag,
+                DeviceAttributes.wind_avoid,
+                DeviceAttributes.wind_straight,
+                DeviceAttributes.yb_wind_avoid,
+            },
+        ),
+        # Keep every optional status in its own query class. Protocol detection
+        # tracks unsupported requests by class name, so one missing feature does
+        # not suppress the other probe results or the existing combined query.
+        additional_new_protocol_queries=(
+            NewProtocolComfortSleepQuery,
+            NewProtocolWindStraightQuery,
+            NewProtocolWindAvoidQuery,
+            NewProtocolNobodyEnergySaveQuery,
+            NewProtocolNobodyEnergySaveTagQuery,
+            NewProtocolLightSensitiveQuery,
+            NewProtocolFilterQuery,
+        ),
         c0_indoor_temperature_offset=0,
         c0_invalid_outdoor_temperature_values=frozenset(
             {MODEL_220F4047_C0_OUTDOOR_TEMPERATURE_PLACEHOLDER},
@@ -404,17 +446,25 @@ class MideaACDevice(MideaDevice):
             # Queried on its own so an empty response for the combined
             # new-protocol query does not suppress the self-clean state.
             NewProtocolSelfCleanQuery(self._message_protocol_version),
-            PowerQuery(self._message_protocol_version),
-            HumidityQuery(self._message_protocol_version),
-            GroupZeroQuery(self._message_protocol_version),
-            # Devices that do not answer a group query are detected during the
-            # initial protocol check and the query is skipped from then on.
-            GroupOneQuery(self._message_protocol_version),
-            GroupTwoQuery(self._message_protocol_version),
-            GroupSevenQuery(self._message_protocol_version),
-            CapabilitiesQuery(self._message_protocol_version),
-            CapabilitiesAdditionalQuery(self._message_protocol_version),
         ]
+        queries.extend(
+            query_type(self._message_protocol_version)
+            for query_type in self._model_capabilities.additional_new_protocol_queries
+        )
+        queries.extend(
+            [
+                PowerQuery(self._message_protocol_version),
+                HumidityQuery(self._message_protocol_version),
+                GroupZeroQuery(self._message_protocol_version),
+                # Devices that do not answer a group query are detected during the
+                # initial protocol check and the query is skipped from then on.
+                GroupOneQuery(self._message_protocol_version),
+                GroupTwoQuery(self._message_protocol_version),
+                GroupSevenQuery(self._message_protocol_version),
+                CapabilitiesQuery(self._message_protocol_version),
+                CapabilitiesAdditionalQuery(self._message_protocol_version),
+            ],
+        )
         return queries
 
     def process_message(self, msg: bytes) -> dict[str, Any]:  # noqa: C901
@@ -830,6 +880,15 @@ class MideaACDevice(MideaDevice):
             DeviceAttributes.outdoor_temperature,
             DeviceAttributes.indoor_humidity,
             DeviceAttributes.full_dust,
+            DeviceAttributes.comfort_sleep,
+            DeviceAttributes.filter_level,
+            DeviceAttributes.filter_value,
+            DeviceAttributes.light_sensitive,
+            DeviceAttributes.nobody_energy_save,
+            DeviceAttributes.nobody_energy_save_tag,
+            DeviceAttributes.wind_avoid,
+            DeviceAttributes.wind_straight,
+            DeviceAttributes.yb_wind_avoid,
             DeviceAttributes.total_energy_consumption,
             DeviceAttributes.current_energy_consumption,
             DeviceAttributes.realtime_power,
