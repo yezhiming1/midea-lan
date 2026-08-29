@@ -1,6 +1,6 @@
 # Changelog
 
-## [2026.8.29](https://github.com/yezhiming1/midea-lan/compare/midea-lan-v2026.8.28...midea-lan-v2026.8.29) (2026-08-28)
+## [2026.8.29](https://github.com/yezhiming1/midea-lan/compare/midea-lan-v2026.8.28...midea-lan-v2026.8.29) (2026-08-29)
 
 
 ### Features
@@ -10,7 +10,8 @@
 
 ### Bug Fixes
 
-* **ac:** turn off only the active 220F4047 person-airflow flag so firmware accepts the command
+* **ac:** use the verified absolute screen-display property for 220F4047 subtype 8
+* **ac:** mirror the App's single active-toggle behavior when turning off 220F4047 person airflow
 * **ac:** send mutually exclusive wind-toward/wind-avoid flags in one protocol message
 
 ## [2026.8.28](https://github.com/yezhiming1/midea-lan/compare/midea-lan-v2026.8.0...midea-lan-v2026.8.28) (2026-08-28)

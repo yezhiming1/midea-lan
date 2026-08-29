@@ -172,6 +172,7 @@ class ACModelCapabilities:
     has_bb_fresh_air: bool = False
     has_person_airflow_control: bool = False
     has_light_sensitive_control: bool = False
+    has_absolute_screen_display_control: bool = False
     c0_indoor_temperature_offset: int = C0_DEFAULT_TEMPERATURE_OFFSET
     c0_invalid_outdoor_temperature_values: frozenset[int] = (
         C0_DEFAULT_INVALID_OUTDOOR_TEMPERATURE_VALUES
@@ -211,6 +212,7 @@ AC_MODEL_CAPABILITIES = {
         ),
         has_person_airflow_control=True,
         has_light_sensitive_control=True,
+        has_absolute_screen_display_control=True,
         c0_indoor_temperature_offset=0,
         c0_invalid_outdoor_temperature_values=frozenset(
             {MODEL_220F4047_C0_OUTDOOR_TEMPERATURE_PLACEHOLDER},
@@ -923,13 +925,18 @@ class MideaACDevice(MideaDevice):
                 self._attributes[DeviceAttributes.prompt_tone] = value
                 self.update_all({DeviceAttributes.prompt_tone.value: value})
             elif attr == DeviceAttributes.screen_display:
-                # The AC firmware only exposes a toggle command for the
+                if self._model_capabilities.has_absolute_screen_display_control:
+                    # Exact-model firmware accepts the App's absolute B0 0x0017
+                    # property and ignores the legacy X41 toggle command.
+                    message = self.make_newprotocol_message_set(
+                        attr=DeviceAttributes.screen_display_alternate,
+                        value=bool(value),
+                    )
+                # Other AC firmware exposes only a toggle command for the
                 # display, so make the switch idempotent: toggle only when the
                 # requested state differs from the last reported state.
-                # Otherwise repeated turn_on/turn_off service calls alternate
-                # the physical display instead of setting an absolute state.
                 # https://github.com/wuwentao/midea_ac_lan/issues/623
-                if bool(value) != bool(
+                elif bool(value) != bool(
                     self._attributes[DeviceAttributes.screen_display],
                 ):
                     message = ToggleDisplay(self._message_protocol_version)
@@ -1023,9 +1030,9 @@ class MideaACDevice(MideaDevice):
 
         message = NewProtocolSet(self._message_protocol_version)
         if mode == PERSON_AIRFLOW_OFF:
-            # The 220F4047 firmware ignores an all-off packet containing both
-            # person-airflow tags. Match the App protocol and turn off only the
-            # flag that the appliance currently reports as active.
+            # The App writes the two person-airflow features as independent
+            # toggles. For off, write only the flag currently reported active
+            # and avoid a redundant two-tag all-off packet.
             if self._attributes[DeviceAttributes.wind_avoid]:
                 message.wind_avoid = False
             elif self._attributes[DeviceAttributes.wind_straight]:

@@ -273,6 +273,23 @@ class TestMideaACDevice:
             mock_build_send.assert_called_once()
             assert isinstance(mock_build_send.call_args[0][0], ToggleDisplay)
 
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_220f4047_screen_display_uses_absolute_property(
+        self,
+        enabled: bool,
+    ) -> None:
+        """The verified model uses B0 0x0017 instead of the ignored X41 toggle."""
+        device = self._make_device("220F4047", 8)
+
+        with patch.object(device, "build_send") as build_send:
+            device.set_attribute(DeviceAttributes.screen_display.value, enabled)
+
+        message = build_send.call_args.args[0]
+        assert isinstance(message, NewProtocolSet)
+        assert message.screen_display_alternate is not None
+        assert bool(message.screen_display_alternate) == enabled
+        assert bool(message.prompt_tone)
+
     def test_set_attribute_eco_mode_resets_exclusive_modes(self) -> None:
         """Test eco mode set resets comfort and frost protect on general set."""
         with patch.object(self.device, "build_send") as mock_build_send:
