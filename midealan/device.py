@@ -691,6 +691,7 @@ class MideaDevice(threading.Thread):
 
     def close_socket(self, sock: socket.socket | None = None) -> None:
         """Close socket."""
+        closed_current_socket = False
         with self._socket_lock:
             if sock is None:
                 sock = self._socket
@@ -723,6 +724,13 @@ class MideaDevice(threading.Thread):
                     # Avoid clearing a socket installed by a concurrent reconnect.
                     if self._socket is sock:
                         self._socket = None
+                        closed_current_socket = True
+                # A reconnect can succeed before connect() records a failed
+                # attempt, so publish the loss as soon as the active socket is
+                # gone.  Consumers can then preserve boot-reset preferences
+                # until the matching available=True update arrives.
+                if closed_current_socket and self._is_run:
+                    self.set_available(False)
 
     def set_ip_address(self, ip_address: str) -> None:
         """Set IP address."""

@@ -939,6 +939,20 @@ class TestMideaDevice:
         socket_mock.close.assert_called_once()
         assert self.device._socket is None
 
+    def test_close_socket_marks_running_device_unavailable(self) -> None:
+        """Losing the active socket publishes unavailable before reconnect."""
+        socket_mock = MagicMock()
+        update = MagicMock()
+        self.device._socket = socket_mock
+        self.device._is_run = True
+        self.device._available = True
+        self.device.register_update(update)
+
+        self.device.close_socket()
+
+        assert self.device.available is False
+        update.assert_called_once_with({"available": False})
+
     def test_close_socket_without_socket_clears_connection_state(self) -> None:
         """Test close_socket clears connection state when no socket exists."""
         self.device._socket = None
@@ -961,16 +975,22 @@ class TestMideaDevice:
         """Test close_socket only clears the same socket it captured."""
         old_socket = MagicMock()
         new_socket: Any = MagicMock()
+        update = MagicMock()
 
         def replace_socket() -> None:
             self.device._socket = new_socket
 
         old_socket.close.side_effect = replace_socket
         self.device._socket = old_socket
+        self.device._is_run = True
+        self.device._available = True
+        self.device.register_update(update)
         self.device.close_socket()
 
         old_socket.close.assert_called_once()
         assert self.device._socket is new_socket
+        assert self.device.available is True
+        update.assert_not_called()
 
     def test_set_ip(self) -> None:
         """Test set ip."""
