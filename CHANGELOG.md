@@ -1,5 +1,12 @@
 # Changelog
 
+## [2026.8.30](https://github.com/yezhiming1/midea-lan/compare/midea-lan-v2026.8.29...midea-lan-v2026.8.30) (2026-08-29)
+
+
+### Bug Fixes
+
+* **transport:** publish unavailable immediately when the active socket is lost
+
 ## [2026.8.29](https://github.com/yezhiming1/midea-lan/compare/midea-lan-v2026.8.28...midea-lan-v2026.8.29) (2026-08-29)
 
 
