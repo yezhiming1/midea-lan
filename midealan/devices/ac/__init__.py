@@ -173,6 +173,7 @@ class ACModelCapabilities:
     has_person_airflow_control: bool = False
     has_light_sensitive_control: bool = False
     has_absolute_screen_display_control: bool = False
+    has_new_mode_power_control: bool = False
     c0_indoor_temperature_offset: int = C0_DEFAULT_TEMPERATURE_OFFSET
     c0_invalid_outdoor_temperature_values: frozenset[int] = (
         C0_DEFAULT_INVALID_OUTDOOR_TEMPERATURE_VALUES
@@ -213,6 +214,7 @@ AC_MODEL_CAPABILITIES = {
         has_person_airflow_control=True,
         has_light_sensitive_control=True,
         has_absolute_screen_display_control=True,
+        has_new_mode_power_control=True,
         c0_indoor_temperature_offset=0,
         c0_invalid_outdoor_temperature_values=frozenset(
             {MODEL_220F4047_C0_OUTDOOR_TEMPERATURE_PLACEHOLDER},
@@ -789,6 +791,67 @@ class MideaACDevice(MideaDevice):
 
         return message
 
+    def _make_mode_power_message_set(
+        self,
+        *,
+        power: bool | None = None,
+        mode: int | None = None,
+        target_temperature: float | None = None,
+        fan_speed: int | None = None,
+    ) -> NewProtocolSet:
+        """Build the exact-model B0 grouped power and operating-mode command."""
+        message = NewProtocolSet(self._message_protocol_version)
+        message.mode_power = (
+            bool(
+                self._attributes[DeviceAttributes.power] if power is None else power,
+            ),
+            int(
+                self._attributes[DeviceAttributes.mode] if mode is None else mode,
+            ),
+            float(
+                self._attributes[DeviceAttributes.target_temperature]
+                if target_temperature is None
+                else target_temperature,
+            ),
+            int(
+                self._attributes[DeviceAttributes.fan_speed]
+                if fan_speed is None
+                else fan_speed,
+            ),
+        )
+        return message
+
+    def _make_mode_power_attribute_message(
+        self,
+        attr: str,
+        value: bool | float | str,
+    ) -> NewProtocolSet:
+        """Build a grouped command with one requested operating-field override."""
+        power: bool | None = None
+        mode: int | None = None
+        target_temperature: float | None = None
+        fan_speed: int | None = None
+        if attr == DeviceAttributes.power:
+            power = bool(value)
+        elif attr == DeviceAttributes.mode:
+            power = True
+            mode = int(value)
+            if self._attributes[DeviceAttributes.mode] == DRY_MODE:
+                fan_speed = 102
+                self._attributes[DeviceAttributes.fan_speed] = fan_speed
+            self._attributes[DeviceAttributes.power] = True
+            self._attributes[DeviceAttributes.mode] = mode
+        elif attr == DeviceAttributes.target_temperature:
+            target_temperature = float(value)
+        else:
+            fan_speed = int(value)
+        return self._make_mode_power_message_set(
+            power=power,
+            mode=mode,
+            target_temperature=target_temperature,
+            fan_speed=fan_speed,
+        )
+
     def make_subprotocol_message_set(self) -> MessageSubProtocolSet:
         """Midea AC device make subprotocol message set."""
         message = MessageSubProtocolSet(self._message_protocol_version)
@@ -877,6 +940,28 @@ class MideaACDevice(MideaDevice):
         else:
             message = self.make_message_set()
         return message
+
+    def _send_attribute_message(
+        self,
+        message: (
+            ToggleDisplay
+            | NewProtocolSet
+            | SubProtocolFreshAirSet
+            | MessageSubProtocolSet
+            | MessageSet
+            | None
+        ),
+        optimistic_self_clean: bool | None,
+    ) -> None:
+        """Send one resolved attribute command and apply its optimistic state."""
+        if message is None:
+            return
+        self.build_send(message)
+        if optimistic_self_clean is None:
+            return
+        self._pending_self_clean = (optimistic_self_clean, time.monotonic())
+        self._attributes[DeviceAttributes.self_clean] = optimistic_self_clean
+        self.update_all({DeviceAttributes.self_clean.value: optimistic_self_clean})
 
     def set_attribute(self, attr: str, value: bool | float | str) -> None:
         """Midea AC device set attribute."""
@@ -972,6 +1057,13 @@ class MideaACDevice(MideaDevice):
                     "[%s] Power saving is unsupported by the AC subprotocol",
                     self.device_id,
                 )
+            elif self._model_capabilities.has_new_mode_power_control and attr in {
+                DeviceAttributes.power,
+                DeviceAttributes.mode,
+                DeviceAttributes.target_temperature,
+                DeviceAttributes.fan_speed,
+            }:
+                message = self._make_mode_power_attribute_message(attr, value)
             elif attr in self._attributes:
                 message = self.make_message_uniq_set()
                 if attr in [
@@ -1009,14 +1101,7 @@ class MideaACDevice(MideaDevice):
                     # https://github.com/midea-lan/midea-local/issues/495
                     self._attributes[DeviceAttributes.power] = True
                     self._attributes[DeviceAttributes.mode] = value
-        if message is not None:
-            self.build_send(message)
-            if optimistic_self_clean is not None:
-                self._pending_self_clean = (optimistic_self_clean, time.monotonic())
-                self._attributes[DeviceAttributes.self_clean] = optimistic_self_clean
-                self.update_all(
-                    {DeviceAttributes.self_clean.value: optimistic_self_clean},
-                )
+        self._send_attribute_message(message, optimistic_self_clean)
 
     def set_person_airflow_mode(self, mode: str) -> None:
         """Set the mutually exclusive person-airflow mode for a verified model."""
@@ -1066,11 +1151,19 @@ class MideaACDevice(MideaDevice):
         zone: int | None = None,  # noqa: ARG002
     ) -> None:
         """Midea AC device set target temperature."""
-        message: MessageSubProtocolSet | MessageSet = self.make_message_uniq_set()
-        message.target_temperature = target_temperature
-        if mode is not None:
-            message.power = True
-            message.mode = mode
+        message: MessageSubProtocolSet | MessageSet | NewProtocolSet
+        if self._model_capabilities.has_new_mode_power_control:
+            message = self._make_mode_power_message_set(
+                power=True if mode is not None else None,
+                mode=mode,
+                target_temperature=target_temperature,
+            )
+        else:
+            message = self.make_message_uniq_set()
+            message.target_temperature = target_temperature
+            if mode is not None:
+                message.power = True
+                message.mode = mode
         self.build_send(message)
 
     def set_swing(self, swing_vertical: bool, swing_horizontal: bool) -> None:

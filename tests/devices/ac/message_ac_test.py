@@ -477,6 +477,30 @@ class TestNewProtocolSetAngles:
 class TestNewProtocolSetModelControls:
     """Test model-gated person-airflow and smart-light payloads."""
 
+    @pytest.mark.parametrize(("power", "expected_power"), [(True, 0x01), (False, 0x00)])
+    def test_mode_power_property_payload(
+        self,
+        power: bool,
+        expected_power: int,
+    ) -> None:
+        """The grouped operating property keeps the App's four-byte layout."""
+        message = NewProtocolSet(protocol_version=ProtocolVersion.V1)
+        message.mode_power = (power, 2, 16.5, 100)
+
+        assert message.body[:9] == bytearray(
+            [
+                0xB0,
+                0x01,
+                NewProtocolTags.mode_power & 0xFF,
+                NewProtocolTags.mode_power >> 8,
+                0x04,
+                expected_power,
+                0x02,
+                0x21,
+                0x64,
+            ],
+        )
+
     @pytest.mark.parametrize(
         ("attribute", "tag", "value", "expected"),
         [

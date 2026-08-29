@@ -101,8 +101,9 @@ NEW_PROTOCOL_LEGACY_SETPOINT_BYTE = 3
 NEW_PROTOCOL_INDOOR_TEMPERATURE_BYTE = 40
 NEW_PROTOCOL_INDOOR_TEMPERATURE_DECIMAL_BYTE = 41
 
-# Model-specific optional property payloads used by the 220F4047 probe.
+# Model-specific optional property payloads used by 220F4047.
 # Keep the values raw unless their wire meaning is unambiguous.
+MODE_POWER_TEMPERATURE_SCALE = 2
 WIND_STRAIGHT_VALUE = 0x01
 YB_WIND_AVOID_VALUE = 0x02
 LIGHT_SENSITIVE_ENABLED_VALUE = 0x03
@@ -144,6 +145,7 @@ class PowerFormats(IntEnum):
 class NewProtocolTags(IntEnum):
     """New protocol tags in query and response."""
 
+    mode_power = 0x0001
     wind_ud_angle = 0x0009
     wind_lr_angle = 0x000A
     comfort_sleep = 0x0011
@@ -892,6 +894,7 @@ class NewProtocolSet(MessageACBase):
         self.indirect_wind: bytes | None = None
         self.prompt_tone: bytes | None = None
         self.breezeless: bytes | None = None
+        self.mode_power: tuple[bool, int, float, int] | None = None
         self.wind_straight: bool | None = None
         self.wind_avoid: bool | None = None
         self.light_sensitive: int | None = None
@@ -909,6 +912,22 @@ class NewProtocolSet(MessageACBase):
     def _body(self) -> bytearray:
         pack_count = 0
         payload = bytearray([0x00])
+        if self.mode_power is not None:
+            power, mode, target_temperature, fan_speed = self.mode_power
+            pack_count += 1
+            payload.extend(
+                NewProtocolMessageBody.pack(
+                    param=NewProtocolTags.mode_power,
+                    value=bytearray(
+                        [
+                            int(power),
+                            int(mode),
+                            round(target_temperature * MODE_POWER_TEMPERATURE_SCALE),
+                            int(fan_speed),
+                        ],
+                    ),
+                ),
+            )
         if self.breezeless is not None:
             pack_count += 1
             payload.extend(

@@ -7,6 +7,7 @@ import pytest
 
 from midealan.const import ProtocolVersion
 from midealan.devices.ac import (
+    DRY_MODE,
     PERSON_AIRFLOW_AVOID,
     PERSON_AIRFLOW_OFF,
     PERSON_AIRFLOW_TOWARD,
@@ -22,6 +23,7 @@ from midealan.devices.ac.message import (
     GroupZeroQuery,
     HumidityQuery,
     MessageQuery,
+    MessageSet,
     NewProtocolComfortSleepQuery,
     NewProtocolFilterQuery,
     NewProtocolLightSensitiveQuery,
@@ -289,6 +291,113 @@ class TestMideaACDevice:
         assert message.screen_display_alternate is not None
         assert bool(message.screen_display_alternate) == enabled
         assert bool(message.prompt_tone)
+
+    @pytest.mark.parametrize(
+        ("attribute", "value", "expected"),
+        [
+            (
+                DeviceAttributes.power,
+                True,
+                (True, 2, 16.5, 100),
+            ),
+            (
+                DeviceAttributes.power,
+                False,
+                (False, 2, 16.5, 100),
+            ),
+            (
+                DeviceAttributes.target_temperature,
+                18.5,
+                (False, 2, 18.5, 100),
+            ),
+            (
+                DeviceAttributes.fan_speed,
+                60,
+                (False, 2, 16.5, 60),
+            ),
+        ],
+    )
+    def test_220f4047_operating_attributes_use_grouped_property(
+        self,
+        attribute: DeviceAttributes,
+        value: bool | float,
+        expected: tuple[bool, int, float, int],
+    ) -> None:
+        """Only the requested field changes in the exact-model B0 property."""
+        device = self._make_device("220F4047", 8)
+        device._attributes[DeviceAttributes.power] = False
+        device._attributes[DeviceAttributes.mode] = 2
+        device._attributes[DeviceAttributes.target_temperature] = 16.5
+        device._attributes[DeviceAttributes.fan_speed] = 100
+
+        with patch.object(device, "build_send") as build_send:
+            device.set_attribute(attribute, value)
+
+        message = build_send.call_args.args[0]
+        assert isinstance(message, NewProtocolSet)
+        assert message.mode_power == expected
+        assert message.prompt_tone is None
+
+    def test_220f4047_mode_then_temperature_keeps_grouped_command_on(self) -> None:
+        """A mode edge updates the cache used by an immediate temperature write."""
+        device = self._make_device("220F4047", 8)
+        device._attributes[DeviceAttributes.power] = False
+        device._attributes[DeviceAttributes.mode] = DRY_MODE
+        device._attributes[DeviceAttributes.target_temperature] = 26.0
+        device._attributes[DeviceAttributes.fan_speed] = 40
+
+        with patch.object(device, "build_send") as build_send:
+            device.set_attribute(DeviceAttributes.mode, 2)
+            mode_message = build_send.call_args.args[0]
+            assert isinstance(mode_message, NewProtocolSet)
+            assert mode_message.mode_power == (True, 2, 26.0, 102)
+            assert device.attributes[DeviceAttributes.power] is True
+            assert device.attributes[DeviceAttributes.mode] == 2
+
+            device.set_target_temperature(21.5, None)
+            temperature_message = build_send.call_args.args[0]
+            assert isinstance(temperature_message, NewProtocolSet)
+            assert temperature_message.mode_power == (True, 2, 21.5, 102)
+
+    @pytest.mark.parametrize("mode", [None, 4])
+    def test_220f4047_set_target_temperature_uses_grouped_property(
+        self,
+        mode: int | None,
+    ) -> None:
+        """The climate temperature API uses the same atomic operating property."""
+        device = self._make_device("220F4047", 8)
+        device._attributes[DeviceAttributes.power] = False
+        device._attributes[DeviceAttributes.mode] = 2
+        device._attributes[DeviceAttributes.target_temperature] = 16.5
+        device._attributes[DeviceAttributes.fan_speed] = 100
+
+        with patch.object(device, "build_send") as build_send:
+            device.set_target_temperature(18.5, mode)
+
+        message = build_send.call_args.args[0]
+        assert isinstance(message, NewProtocolSet)
+        assert message.mode_power == (
+            mode is not None,
+            2 if mode is None else mode,
+            18.5,
+            100,
+        )
+
+    @pytest.mark.parametrize(("model", "subtype"), [("220F4047", 1), ("other", 8)])
+    def test_grouped_mode_power_control_is_gated_by_exact_model(
+        self,
+        model: str,
+        subtype: int,
+    ) -> None:
+        """Unverified model/subtype pairs retain the established X40 command."""
+        device = self._make_device(model, subtype)
+
+        with patch.object(device, "build_send") as build_send:
+            device.set_attribute(DeviceAttributes.power, True)
+
+        message = build_send.call_args.args[0]
+        assert isinstance(message, MessageSet)
+        assert message.power is True
 
     def test_set_attribute_eco_mode_resets_exclusive_modes(self) -> None:
         """Test eco mode set resets comfort and frost protect on general set."""
