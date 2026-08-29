@@ -6,7 +6,13 @@ from unittest.mock import patch
 import pytest
 
 from midealan.const import ProtocolVersion
-from midealan.devices.ac import DeviceAttributes, MideaACDevice
+from midealan.devices.ac import (
+    PERSON_AIRFLOW_AVOID,
+    PERSON_AIRFLOW_OFF,
+    PERSON_AIRFLOW_TOWARD,
+    DeviceAttributes,
+    MideaACDevice,
+)
 from midealan.devices.ac.message import (
     CapabilitiesAdditionalQuery,
     CapabilitiesQuery,
@@ -23,6 +29,7 @@ from midealan.devices.ac.message import (
     NewProtocolNobodyEnergySaveTagQuery,
     NewProtocolQuery,
     NewProtocolSelfCleanQuery,
+    NewProtocolSet,
     NewProtocolTags,
     NewProtocolWindAvoidQuery,
     NewProtocolWindStraightQuery,
@@ -266,6 +273,23 @@ class TestMideaACDevice:
             mock_build_send.assert_called_once()
             assert isinstance(mock_build_send.call_args[0][0], ToggleDisplay)
 
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_220f4047_screen_display_uses_absolute_property(
+        self,
+        enabled: bool,
+    ) -> None:
+        """The verified model uses B0 0x0017 instead of the ignored X41 toggle."""
+        device = self._make_device("220F4047", 8)
+
+        with patch.object(device, "build_send") as build_send:
+            device.set_attribute(DeviceAttributes.screen_display.value, enabled)
+
+        message = build_send.call_args.args[0]
+        assert isinstance(message, NewProtocolSet)
+        assert message.screen_display_alternate is not None
+        assert bool(message.screen_display_alternate) == enabled
+        assert bool(message.prompt_tone)
+
     def test_set_attribute_eco_mode_resets_exclusive_modes(self) -> None:
         """Test eco mode set resets comfort and frost protect on general set."""
         with patch.object(self.device, "build_send") as mock_build_send:
@@ -417,6 +441,117 @@ class TestMideaACDevice:
         assert DeviceAttributes.comfort_sleep.value not in other_status
         assert DeviceAttributes.wind_straight.value not in other_status
         assert DeviceAttributes.light_sensitive.value not in other_status
+
+    @pytest.mark.parametrize(
+        ("mode", "toward", "avoid"),
+        [
+            (PERSON_AIRFLOW_TOWARD, True, False),
+            (PERSON_AIRFLOW_AVOID, False, True),
+        ],
+    )
+    def test_220f4047_person_airflow_control(
+        self,
+        mode: str,
+        toward: bool,
+        avoid: bool,
+    ) -> None:
+        """The exact model sends one mutually exclusive person-airflow command."""
+        device = self._make_device("220F4047", 8)
+
+        with patch.object(device, "build_send") as build_send:
+            device.set_person_airflow_mode(mode)
+
+        message = build_send.call_args.args[0]
+        assert isinstance(message, NewProtocolSet)
+        assert message.wind_straight is toward
+        assert message.wind_avoid is avoid
+        assert bool(message.prompt_tone)
+
+    @pytest.mark.parametrize(
+        ("active_mode", "expected_toward", "expected_avoid"),
+        [
+            (PERSON_AIRFLOW_TOWARD, False, None),
+            (PERSON_AIRFLOW_AVOID, None, False),
+        ],
+    )
+    def test_220f4047_person_airflow_off_targets_only_active_flag(
+        self,
+        active_mode: str,
+        expected_toward: bool | None,
+        expected_avoid: bool | None,
+    ) -> None:
+        """Turning off mirrors the App's single active-toggle write."""
+        device = self._make_device("220F4047", 8)
+        device._attributes[DeviceAttributes.wind_straight] = (
+            active_mode == PERSON_AIRFLOW_TOWARD
+        )
+        device._attributes[DeviceAttributes.wind_avoid] = (
+            active_mode == PERSON_AIRFLOW_AVOID
+        )
+
+        with patch.object(device, "build_send") as build_send:
+            device.set_person_airflow_mode(PERSON_AIRFLOW_OFF)
+
+        message = build_send.call_args.args[0]
+        assert isinstance(message, NewProtocolSet)
+        assert message.wind_straight is expected_toward
+        assert message.wind_avoid is expected_avoid
+        assert bool(message.prompt_tone)
+
+    def test_220f4047_person_airflow_off_is_noop_when_already_off(self) -> None:
+        """Do not send an empty property packet when both flags are already off."""
+        device = self._make_device("220F4047", 8)
+
+        with patch.object(device, "build_send") as build_send:
+            device.set_person_airflow_mode(PERSON_AIRFLOW_OFF)
+
+        build_send.assert_not_called()
+
+    def test_220f4047_person_airflow_control_rejects_invalid_mode(self) -> None:
+        """An invalid mode cannot produce a device write."""
+        device = self._make_device("220F4047", 8)
+
+        with (
+            patch.object(device, "build_send") as build_send,
+            pytest.raises(ValueError, match="Unsupported person-airflow mode"),
+        ):
+            device.set_person_airflow_mode("sideways")
+
+        build_send.assert_not_called()
+
+    @pytest.mark.parametrize(("enabled", "expected"), [(True, 3), (False, 0)])
+    def test_220f4047_light_sensitive_control(
+        self,
+        enabled: bool,
+        expected: int,
+    ) -> None:
+        """Smart-light control maps the App switch to raw high/off values."""
+        device = self._make_device("220F4047", 8)
+
+        with patch.object(device, "build_send") as build_send:
+            device.set_light_sensitive(enabled)
+
+        message = build_send.call_args.args[0]
+        assert isinstance(message, NewProtocolSet)
+        assert message.light_sensitive == expected
+        assert bool(message.prompt_tone)
+
+    @pytest.mark.parametrize(("model", "subtype"), [("220F4047", 1), ("other", 8)])
+    def test_model_controls_are_gated_by_exact_model(
+        self,
+        model: str,
+        subtype: int,
+    ) -> None:
+        """No unverified model can use the new write APIs."""
+        device = self._make_device(model, subtype)
+
+        with patch.object(device, "build_send") as build_send:
+            with pytest.raises(NotImplementedError):
+                device.set_person_airflow_mode(PERSON_AIRFLOW_TOWARD)
+            with pytest.raises(NotImplementedError):
+                device.set_light_sensitive(True)
+
+        build_send.assert_not_called()
 
     def test_bb_model_builds_distinct_queries_and_attributes(self) -> None:
         """Test verified BB model starts with independent BB queries."""

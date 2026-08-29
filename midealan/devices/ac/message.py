@@ -101,10 +101,11 @@ NEW_PROTOCOL_LEGACY_SETPOINT_BYTE = 3
 NEW_PROTOCOL_INDOOR_TEMPERATURE_BYTE = 40
 NEW_PROTOCOL_INDOOR_TEMPERATURE_DECIMAL_BYTE = 41
 
-# Model-specific optional property payloads used by the 220F4047 read-only
-# probe. Keep the values raw unless their wire meaning is unambiguous.
+# Model-specific optional property payloads used by the 220F4047 probe.
+# Keep the values raw unless their wire meaning is unambiguous.
 WIND_STRAIGHT_VALUE = 0x01
 YB_WIND_AVOID_VALUE = 0x02
+LIGHT_SENSITIVE_ENABLED_VALUE = 0x03
 FILTER_LEVEL_INDEX = 1
 FILTER_VALUE_INDEX = 10
 FILTER_MIN_PAYLOAD_LENGTH = FILTER_VALUE_INDEX + 1
@@ -891,6 +892,9 @@ class NewProtocolSet(MessageACBase):
         self.indirect_wind: bytes | None = None
         self.prompt_tone: bytes | None = None
         self.breezeless: bytes | None = None
+        self.wind_straight: bool | None = None
+        self.wind_avoid: bool | None = None
+        self.light_sensitive: int | None = None
         self.screen_display_alternate: bytes | None = None
         self.fresh_air_1: bytes | None = None
         self.fresh_air_2: bytes | None = None
@@ -919,6 +923,30 @@ class NewProtocolSet(MessageACBase):
                 NewProtocolMessageBody.pack(
                     param=NewProtocolTags.indirect_wind,
                     value=bytearray([0x02 if self.indirect_wind else 0x01]),
+                ),
+            )
+        if self.wind_straight is not None:
+            pack_count += 1
+            payload.extend(
+                NewProtocolMessageBody.pack(
+                    param=NewProtocolTags.wind_straight,
+                    value=bytearray([0x01 if self.wind_straight else 0x00]),
+                ),
+            )
+        if self.wind_avoid is not None:
+            pack_count += 1
+            payload.extend(
+                NewProtocolMessageBody.pack(
+                    param=NewProtocolTags.wind_avoid,
+                    value=bytearray([0x01 if self.wind_avoid else 0x00]),
+                ),
+            )
+        if self.light_sensitive is not None:
+            pack_count += 1
+            payload.extend(
+                NewProtocolMessageBody.pack(
+                    param=NewProtocolTags.light_sensitive,
+                    value=bytearray([self.light_sensitive]),
                 ),
             )
         if self.prompt_tone is not None:

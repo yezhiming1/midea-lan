@@ -14,6 +14,7 @@ from midealan.message import ListTypes
 from .message import (
     C0_DEFAULT_INVALID_OUTDOOR_TEMPERATURE_VALUES,
     C0_DEFAULT_TEMPERATURE_OFFSET,
+    LIGHT_SENSITIVE_ENABLED_VALUE,
     CapabilitiesAdditionalQuery,
     CapabilitiesQuery,
     GroupOneQuery,
@@ -62,6 +63,14 @@ ACQuery = (
 
 # AC mode constants
 DRY_MODE = 3
+PERSON_AIRFLOW_OFF = "off"
+PERSON_AIRFLOW_TOWARD = "toward"
+PERSON_AIRFLOW_AVOID = "avoid"
+PERSON_AIRFLOW_MODES = (
+    PERSON_AIRFLOW_OFF,
+    PERSON_AIRFLOW_TOWARD,
+    PERSON_AIRFLOW_AVOID,
+)
 
 
 class DeviceAttributes(StrEnum):
@@ -161,6 +170,9 @@ class ACModelCapabilities:
     additional_new_protocol_queries: tuple[type[NewProtocolQuery], ...] = ()
     uses_bb_protocol: bool = False
     has_bb_fresh_air: bool = False
+    has_person_airflow_control: bool = False
+    has_light_sensitive_control: bool = False
+    has_absolute_screen_display_control: bool = False
     c0_indoor_temperature_offset: int = C0_DEFAULT_TEMPERATURE_OFFSET
     c0_invalid_outdoor_temperature_values: frozenset[int] = (
         C0_DEFAULT_INVALID_OUTDOOR_TEMPERATURE_VALUES
@@ -198,6 +210,9 @@ AC_MODEL_CAPABILITIES = {
             NewProtocolLightSensitiveQuery,
             NewProtocolFilterQuery,
         ),
+        has_person_airflow_control=True,
+        has_light_sensitive_control=True,
+        has_absolute_screen_display_control=True,
         c0_indoor_temperature_offset=0,
         c0_invalid_outdoor_temperature_values=frozenset(
             {MODEL_220F4047_C0_OUTDOOR_TEMPERATURE_PLACEHOLDER},
@@ -910,13 +925,18 @@ class MideaACDevice(MideaDevice):
                 self._attributes[DeviceAttributes.prompt_tone] = value
                 self.update_all({DeviceAttributes.prompt_tone.value: value})
             elif attr == DeviceAttributes.screen_display:
-                # The AC firmware only exposes a toggle command for the
+                if self._model_capabilities.has_absolute_screen_display_control:
+                    # Exact-model firmware accepts the App's absolute B0 0x0017
+                    # property and ignores the legacy X41 toggle command.
+                    message = self.make_newprotocol_message_set(
+                        attr=DeviceAttributes.screen_display_alternate,
+                        value=bool(value),
+                    )
+                # Other AC firmware exposes only a toggle command for the
                 # display, so make the switch idempotent: toggle only when the
                 # requested state differs from the last reported state.
-                # Otherwise repeated turn_on/turn_off service calls alternate
-                # the physical display instead of setting an absolute state.
                 # https://github.com/wuwentao/midea_ac_lan/issues/623
-                if bool(value) != bool(
+                elif bool(value) != bool(
                     self._attributes[DeviceAttributes.screen_display],
                 ):
                     message = ToggleDisplay(self._message_protocol_version)
@@ -997,6 +1017,47 @@ class MideaACDevice(MideaDevice):
                 self.update_all(
                     {DeviceAttributes.self_clean.value: optimistic_self_clean},
                 )
+
+    def set_person_airflow_mode(self, mode: str) -> None:
+        """Set the mutually exclusive person-airflow mode for a verified model."""
+        if not self._model_capabilities.has_person_airflow_control:
+            raise NotImplementedError(
+                "Person-airflow control is unsupported for "
+                f"{self.model}/{self.subtype}",
+            )
+        if mode not in PERSON_AIRFLOW_MODES:
+            raise ValueError(f"Unsupported person-airflow mode: {mode}")
+
+        message = NewProtocolSet(self._message_protocol_version)
+        if mode == PERSON_AIRFLOW_OFF:
+            # The App writes the two person-airflow features as independent
+            # toggles. For off, write only the flag currently reported active
+            # and avoid a redundant two-tag all-off packet.
+            if self._attributes[DeviceAttributes.wind_avoid]:
+                message.wind_avoid = False
+            elif self._attributes[DeviceAttributes.wind_straight]:
+                message.wind_straight = False
+            else:
+                return
+        else:
+            # Enabling a mode remains atomic so the opposite mode cannot stay
+            # active during a toward/avoid transition.
+            message.wind_straight = mode == PERSON_AIRFLOW_TOWARD
+            message.wind_avoid = mode == PERSON_AIRFLOW_AVOID
+        message.prompt_tone = self._attributes[DeviceAttributes.prompt_tone]
+        self.build_send(message)
+
+    def set_light_sensitive(self, enabled: bool) -> None:
+        """Set smart-light sensing for an exact model with a verified payload."""
+        if not self._model_capabilities.has_light_sensitive_control:
+            raise NotImplementedError(
+                f"Smart-light control is unsupported for {self.model}/{self.subtype}",
+            )
+
+        message = NewProtocolSet(self._message_protocol_version)
+        message.light_sensitive = LIGHT_SENSITIVE_ENABLED_VALUE if enabled else 0
+        message.prompt_tone = self._attributes[DeviceAttributes.prompt_tone]
+        self.build_send(message)
 
     def set_target_temperature(
         self,
