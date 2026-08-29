@@ -1022,8 +1022,21 @@ class MideaACDevice(MideaDevice):
             raise ValueError(f"Unsupported person-airflow mode: {mode}")
 
         message = NewProtocolSet(self._message_protocol_version)
-        message.wind_straight = mode == PERSON_AIRFLOW_TOWARD
-        message.wind_avoid = mode == PERSON_AIRFLOW_AVOID
+        if mode == PERSON_AIRFLOW_OFF:
+            # The 220F4047 firmware ignores an all-off packet containing both
+            # person-airflow tags. Match the App protocol and turn off only the
+            # flag that the appliance currently reports as active.
+            if self._attributes[DeviceAttributes.wind_avoid]:
+                message.wind_avoid = False
+            elif self._attributes[DeviceAttributes.wind_straight]:
+                message.wind_straight = False
+            else:
+                return
+        else:
+            # Enabling a mode remains atomic so the opposite mode cannot stay
+            # active during a toward/avoid transition.
+            message.wind_straight = mode == PERSON_AIRFLOW_TOWARD
+            message.wind_avoid = mode == PERSON_AIRFLOW_AVOID
         message.prompt_tone = self._attributes[DeviceAttributes.prompt_tone]
         self.build_send(message)
 

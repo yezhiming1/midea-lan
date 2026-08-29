@@ -428,7 +428,6 @@ class TestMideaACDevice:
     @pytest.mark.parametrize(
         ("mode", "toward", "avoid"),
         [
-            (PERSON_AIRFLOW_OFF, False, False),
             (PERSON_AIRFLOW_TOWARD, True, False),
             (PERSON_AIRFLOW_AVOID, False, True),
         ],
@@ -450,6 +449,46 @@ class TestMideaACDevice:
         assert message.wind_straight is toward
         assert message.wind_avoid is avoid
         assert bool(message.prompt_tone)
+
+    @pytest.mark.parametrize(
+        ("active_mode", "expected_toward", "expected_avoid"),
+        [
+            (PERSON_AIRFLOW_TOWARD, False, None),
+            (PERSON_AIRFLOW_AVOID, None, False),
+        ],
+    )
+    def test_220f4047_person_airflow_off_targets_only_active_flag(
+        self,
+        active_mode: str,
+        expected_toward: bool | None,
+        expected_avoid: bool | None,
+    ) -> None:
+        """Turning off mirrors the App's single active-toggle write."""
+        device = self._make_device("220F4047", 8)
+        device._attributes[DeviceAttributes.wind_straight] = (
+            active_mode == PERSON_AIRFLOW_TOWARD
+        )
+        device._attributes[DeviceAttributes.wind_avoid] = (
+            active_mode == PERSON_AIRFLOW_AVOID
+        )
+
+        with patch.object(device, "build_send") as build_send:
+            device.set_person_airflow_mode(PERSON_AIRFLOW_OFF)
+
+        message = build_send.call_args.args[0]
+        assert isinstance(message, NewProtocolSet)
+        assert message.wind_straight is expected_toward
+        assert message.wind_avoid is expected_avoid
+        assert bool(message.prompt_tone)
+
+    def test_220f4047_person_airflow_off_is_noop_when_already_off(self) -> None:
+        """Do not send an empty property packet when both flags are already off."""
+        device = self._make_device("220F4047", 8)
+
+        with patch.object(device, "build_send") as build_send:
+            device.set_person_airflow_mode(PERSON_AIRFLOW_OFF)
+
+        build_send.assert_not_called()
 
     def test_220f4047_person_airflow_control_rejects_invalid_mode(self) -> None:
         """An invalid mode cannot produce a device write."""
