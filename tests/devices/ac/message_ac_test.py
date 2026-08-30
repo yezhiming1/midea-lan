@@ -569,9 +569,9 @@ class TestNewProtocolSetModelControls:
     @pytest.mark.parametrize(
         ("attribute", "tag", "value", "expected"),
         [
-            ("swing_vertical", MODEL_220F4047_SWING_UD_TAG, True, 0x01),
+            ("swing_vertical", MODEL_220F4047_SWING_UD_TAG, True, 0x02),
             ("swing_vertical", MODEL_220F4047_SWING_UD_TAG, False, 0x00),
-            ("swing_horizontal", MODEL_220F4047_SWING_LR_TAG, True, 0x01),
+            ("swing_horizontal", MODEL_220F4047_SWING_LR_TAG, True, 0x02),
             ("swing_horizontal", MODEL_220F4047_SWING_LR_TAG, False, 0x00),
             ("eco_mode", MODEL_220F4047_ECO_TAG, True, 0x01),
             ("eco_mode", MODEL_220F4047_ECO_TAG, False, 0x00),
