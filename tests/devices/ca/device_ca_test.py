@@ -56,6 +56,20 @@ class TestMideaCADevice:
 
     def test_initial_attributes(self) -> None:
         """Test initial attributes."""
+        diagnostic_attributes = (
+            DeviceAttributes.code_mode,
+            DeviceAttributes.freezing_mode,
+            DeviceAttributes.smart_mode,
+            DeviceAttributes.energy_saving_mode,
+            DeviceAttributes.holiday_mode,
+            DeviceAttributes.moisturize_mode,
+            DeviceAttributes.preservation_mode,
+            DeviceAttributes.acme_freezing_mode,
+            DeviceAttributes.flood_light,
+            DeviceAttributes.freezing_ice_machine_power,
+        )
+        for attribute in diagnostic_attributes:
+            assert self.device.attributes[attribute] is False
         assert self.device.attributes[DeviceAttributes.energy_consumption] is None
         assert self.device.attributes[DeviceAttributes.refrigerator_actual_temp] is None
         assert self.device.attributes[DeviceAttributes.freezer_actual_temp] is None
@@ -96,6 +110,9 @@ class TestMideaCADevice:
     def test_process_message_general(self) -> None:
         """Test process message with a full general body."""
         body = _general_body(32)
+        body[1] = 0xFF
+        body[7] = 0x10
+        body[8] = 0x80
         body[27] = 0x15  # microcrystal, electronic smell, humidity high
         new_status = self.device.process_message(
             _build_message(MessageType.query, body),
@@ -117,9 +134,25 @@ class TestMideaCADevice:
         assert self.device.attributes[DeviceAttributes.electronic_smell] is True
         assert self.device.attributes[DeviceAttributes.humidity] == "high"
         assert self.device.attributes[DeviceAttributes.variable_mode] == "soft_freezing"
+        assert self.device.attributes[DeviceAttributes.code_mode] is True
+        assert self.device.attributes[DeviceAttributes.freezing_mode] is True
+        assert self.device.attributes[DeviceAttributes.smart_mode] is True
+        assert self.device.attributes[DeviceAttributes.energy_saving_mode] is True
+        assert self.device.attributes[DeviceAttributes.holiday_mode] is True
+        assert self.device.attributes[DeviceAttributes.moisturize_mode] is True
+        assert self.device.attributes[DeviceAttributes.preservation_mode] is True
+        assert self.device.attributes[DeviceAttributes.acme_freezing_mode] is True
+        assert self.device.attributes[DeviceAttributes.flood_light] == 0x10
+        assert (
+            self.device.attributes[DeviceAttributes.freezing_ice_machine_power]
+            == 0x80
+        )
         assert new_status[DeviceAttributes.humidity.value] == "high"
         assert new_status[DeviceAttributes.variable_mode.value] == "soft_freezing"
         assert new_status[DeviceAttributes.energy_consumption.value] == 272
+        assert new_status[DeviceAttributes.code_mode.value] is True
+        assert new_status[DeviceAttributes.acme_freezing_mode.value] is True
+        assert new_status[DeviceAttributes.flood_light.value] == 0x10
 
     def test_process_message_general_unknown_mappings(self) -> None:
         """Test process message with unmapped variable mode and humidity."""

@@ -71,7 +71,10 @@ class CAGeneralMessageBody(MessageBody):
         self.holiday_mode = (body[1] & 0x10) > 0
         self.moisturize_mode = (body[1] & 0x20) > 0
         self.preservation_mode = (body[1] & 0x40) > 0
-        self.acmeFreezing_mode = (body[1] & 0x80) > 0
+        self.acme_freezing_mode = (body[1] & 0x80) > 0
+        # Preserve the historical parser attribute for external callers while
+        # exposing a normalized key through DeviceAttributes.
+        self.acmeFreezing_mode = self.acme_freezing_mode
         # refrigerationTemperature
         self.refrigerator_setting_temp = body[2] & 0x0F
         # freezingTemperature

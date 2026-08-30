@@ -16,6 +16,16 @@ class DeviceAttributes(StrEnum):
     """Midea CA device attributes."""
 
     mode = "mode"
+    code_mode = "code_mode"
+    freezing_mode = "freezing_mode"
+    smart_mode = "smart_mode"
+    energy_saving_mode = "energy_saving_mode"
+    holiday_mode = "holiday_mode"
+    moisturize_mode = "moisturize_mode"
+    preservation_mode = "preservation_mode"
+    acme_freezing_mode = "acme_freezing_mode"
+    flood_light = "flood_light"
+    freezing_ice_machine_power = "freezing_ice_machine_power"
     energy_consumption = "energy_consumption"
     refrigerator_actual_temp = "refrigerator_actual_temp"
     freezer_actual_temp = "freezer_actual_temp"
@@ -70,6 +80,16 @@ class MideaCADevice(MideaDevice):
             device_type=DeviceType.CA,
             **kwargs,
             attributes={
+                DeviceAttributes.code_mode: False,
+                DeviceAttributes.freezing_mode: False,
+                DeviceAttributes.smart_mode: False,
+                DeviceAttributes.energy_saving_mode: False,
+                DeviceAttributes.holiday_mode: False,
+                DeviceAttributes.moisturize_mode: False,
+                DeviceAttributes.preservation_mode: False,
+                DeviceAttributes.acme_freezing_mode: False,
+                DeviceAttributes.flood_light: False,
+                DeviceAttributes.freezing_ice_machine_power: False,
                 DeviceAttributes.energy_consumption: None,
                 DeviceAttributes.refrigerator_actual_temp: None,
                 DeviceAttributes.freezer_actual_temp: None,

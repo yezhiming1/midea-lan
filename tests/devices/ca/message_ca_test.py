@@ -91,6 +91,7 @@ class TestCAGeneralMessageBody:
         assert body.holiday_mode is True
         assert body.moisturize_mode is True
         assert body.preservation_mode is True
+        assert body.acme_freezing_mode is True
         assert body.acmeFreezing_mode is True
         assert body.refrigerator_setting_temp == 5
         assert body.freezer_setting_temp == -15
