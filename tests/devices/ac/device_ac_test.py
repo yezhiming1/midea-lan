@@ -19,6 +19,7 @@ from midealan.devices.ac.message import (
     MODEL_220F4047_DRY_TAG,
     MODEL_220F4047_ECO_TAG,
     MODEL_220F4047_FAN_SPEED_TAG,
+    MODEL_220F4047_FILTER_TAG,
     MODEL_220F4047_MODE_TAG,
     MODEL_220F4047_POWER_SAVING_TAG,
     MODEL_220F4047_POWER_TAG,
@@ -362,6 +363,8 @@ class TestMideaACDevice:
             (DeviceAttributes.dry, "dry"),
             (DeviceAttributes.eco_mode, "eco_mode"),
             (DeviceAttributes.power_saving, "power_saving"),
+            (DeviceAttributes.swing_horizontal, "swing_horizontal"),
+            (DeviceAttributes.swing_vertical, "swing_vertical"),
         ],
     )
     def test_220f4047_boolean_controls_use_core_properties(
@@ -629,8 +632,8 @@ class TestMideaACDevice:
         device = self._make_device("220F4047", 8)
         probe_attributes = {
             DeviceAttributes.comfort_sleep,
-            DeviceAttributes.filter_level,
-            DeviceAttributes.filter_value,
+            DeviceAttributes.filter_full,
+            DeviceAttributes.filter_runtime_seconds,
             DeviceAttributes.light_sensitive,
             DeviceAttributes.nobody_energy_save,
             DeviceAttributes.nobody_energy_save_tag,
@@ -669,9 +672,34 @@ class TestMideaACDevice:
             MODEL_220F4047_POWER_SAVING_TAG,
         } <= core_params
         with patch.object(device, "build_send") as build_send:
-            for attribute in probe_attributes:
+            for attribute in probe_attributes - {
+                DeviceAttributes.nobody_energy_save_tag,
+            }:
                 device.set_attribute(attribute, True)
             build_send.assert_not_called()
+
+        filter_query = next(
+            query for query in queries if isinstance(query, NewProtocolFilterQuery)
+        )
+        assert filter_query._body == bytearray(
+            [
+                0x01,
+                MODEL_220F4047_FILTER_TAG & 0xFF,
+                MODEL_220F4047_FILTER_TAG >> 8,
+            ],
+        )
+
+    def test_220f4047_nobody_energy_save_tag_is_writable(self) -> None:
+        """The real-device raw 0x00FA state can be toggled independently."""
+        device = self._make_device("220F4047", 8)
+
+        with patch.object(device, "build_send") as build_send:
+            device.set_attribute(DeviceAttributes.nobody_energy_save_tag, True)
+
+        message = build_send.call_args.args[0]
+        assert isinstance(message, NewProtocolSet)
+        assert message.nobody_energy_save_tag is True
+        assert bool(message.prompt_tone)
 
     def test_220f4047_probe_response_is_gated_by_exact_model(self) -> None:
         """Test parsed probe values are published only for model/subtype 8."""

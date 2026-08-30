@@ -136,6 +136,8 @@ class DeviceAttributes(StrEnum):
     self_clean = "self_clean"
     filter_level = "filter_level"
     filter_value = "filter_value"
+    filter_runtime_seconds = "filter_runtime_seconds"
+    filter_full = "filter_full"
     nobody_energy_save_tag = "nobody_energy_save_tag"
     pmv = "pmv"
     error_code = "error_code"
@@ -193,8 +195,8 @@ AC_MODEL_CAPABILITIES = {
             {
                 DeviceAttributes.comfort_sleep,
                 DeviceAttributes.cool_hot_sense,
-                DeviceAttributes.filter_level,
-                DeviceAttributes.filter_value,
+                DeviceAttributes.filter_full,
+                DeviceAttributes.filter_runtime_seconds,
                 DeviceAttributes.light_sensitive,
                 DeviceAttributes.nobody_energy_save,
                 DeviceAttributes.nobody_energy_save_tag,
@@ -865,10 +867,16 @@ class MideaACDevice(MideaDevice):
             message.eco_mode = bool(value)
         elif attr == DeviceAttributes.dry:
             message.dry = bool(value)
+        elif attr == DeviceAttributes.swing_vertical:
+            message.swing_vertical = bool(value)
+        elif attr == DeviceAttributes.swing_horizontal:
+            message.swing_horizontal = bool(value)
         elif attr == DeviceAttributes.cool_hot_sense:
             message.cool_hot_sense = bool(value)
         elif attr == DeviceAttributes.power_saving:
             message.power_saving = bool(value)
+        elif attr == DeviceAttributes.nobody_energy_save_tag:
+            message.nobody_energy_save_tag = bool(value)
         elif attr == DeviceAttributes.wind_lr_angle:
             message.wind_deflector_lr = MideaACDevice.get_dict_key_by_value(
                 "_wind_lr_angles",
@@ -1015,9 +1023,10 @@ class MideaACDevice(MideaDevice):
             DeviceAttributes.comfort_sleep,
             DeviceAttributes.filter_level,
             DeviceAttributes.filter_value,
+            DeviceAttributes.filter_runtime_seconds,
+            DeviceAttributes.filter_full,
             DeviceAttributes.light_sensitive,
             DeviceAttributes.nobody_energy_save,
-            DeviceAttributes.nobody_energy_save_tag,
             DeviceAttributes.wind_avoid,
             DeviceAttributes.wind_straight,
             DeviceAttributes.yb_wind_avoid,
@@ -1074,7 +1083,10 @@ class MideaACDevice(MideaDevice):
                     DeviceAttributes.cool_hot_sense,
                     DeviceAttributes.dry,
                     DeviceAttributes.eco_mode,
+                    DeviceAttributes.nobody_energy_save_tag,
                     DeviceAttributes.power_saving,
+                    DeviceAttributes.swing_horizontal,
+                    DeviceAttributes.swing_vertical,
                     DeviceAttributes.wind_lr_angle,
                     DeviceAttributes.wind_ud_angle,
                 }

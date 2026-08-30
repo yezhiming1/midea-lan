@@ -10,6 +10,7 @@ from midealan.devices.ac.message import (
     MODEL_220F4047_DRY_TAG,
     MODEL_220F4047_ECO_TAG,
     MODEL_220F4047_FAN_SPEED_TAG,
+    MODEL_220F4047_FILTER_TAG,
     MODEL_220F4047_MODE_TAG,
     MODEL_220F4047_POWER_SAVING_TAG,
     MODEL_220F4047_POWER_TAG,
@@ -393,13 +394,13 @@ class TestNewProtocolQuery:
                 NewProtocolTags.nobody_energy_save_tag,
             ),
             (NewProtocolLightSensitiveQuery, NewProtocolTags.light_sensitive),
-            (NewProtocolFilterQuery, NewProtocolTags.filter_level),
+            (NewProtocolFilterQuery, MODEL_220F4047_FILTER_TAG),
         ],
     )
     def test_optional_feature_queries_are_isolated(
         self,
         query_type: type[NewProtocolQuery],
-        tag: NewProtocolTags,
+        tag: int,
     ) -> None:
         """Test every optional feature uses its own single-property query."""
         msg = query_type(protocol_version=ProtocolVersion.V1)
@@ -582,6 +583,18 @@ class TestNewProtocolSetModelControls:
             ("wind_straight", NewProtocolTags.wind_straight, False, 0x00),
             ("wind_avoid", NewProtocolTags.wind_avoid, True, 0x01),
             ("wind_avoid", NewProtocolTags.wind_avoid, False, 0x00),
+            (
+                "nobody_energy_save_tag",
+                NewProtocolTags.nobody_energy_save_tag,
+                True,
+                0x01,
+            ),
+            (
+                "nobody_energy_save_tag",
+                NewProtocolTags.nobody_energy_save_tag,
+                False,
+                0x00,
+            ),
             ("light_sensitive", NewProtocolTags.light_sensitive, 3, 0x03),
             ("light_sensitive", NewProtocolTags.light_sensitive, 0, 0x00),
         ],
@@ -2094,9 +2107,7 @@ class TestMessageACResponse:
     def test_message_b1_220f4047_optional_feature_states(self) -> None:
         """Test the model-specific optional feature values are decoded."""
         self.header[9] = 0x03
-        filter_data = bytearray(13)
-        filter_data[1] = 2
-        filter_data[10] = 53
+        filter_data = bytearray([30, 15, 94, 0, 0])
         body = self._properties_body(
             (
                 NewProtocolTags.comfort_sleep,
@@ -2107,7 +2118,7 @@ class TestMessageACResponse:
             (NewProtocolTags.nobody_energy_save, bytes(6)),
             (NewProtocolTags.nobody_energy_save_tag, bytes([0x01])),
             (NewProtocolTags.light_sensitive, bytes([0x01])),
-            (NewProtocolTags.filter_level, filter_data),
+            (MODEL_220F4047_FILTER_TAG, filter_data),
         )
 
         response = MessageACResponse(self.header + body)
@@ -2120,8 +2131,8 @@ class TestMessageACResponse:
         assert parsed["nobody_energy_save"] is False
         assert parsed["nobody_energy_save_tag"] == 1
         assert parsed["light_sensitive"] == 1
-        assert parsed["filter_level"] == 2
-        assert parsed["filter_value"] == 53
+        assert parsed["filter_runtime_seconds"] == 339330
+        assert parsed["filter_full"] is False
 
     def test_message_b1_220f4047_core_property_states(self) -> None:
         """Decode live subtype-8 swing, ECO and post-run drying state."""
@@ -2154,13 +2165,13 @@ class TestMessageACResponse:
         """Test a truncated filter payload cannot publish shifted values."""
         self.header[9] = 0x03
         body = self._properties_body(
-            (NewProtocolTags.filter_level, bytes(range(10))),
+            (MODEL_220F4047_FILTER_TAG, bytes(range(4))),
         )
 
         response = MessageACResponse(self.header + body)
 
-        assert not hasattr(response, "filter_level")
-        assert not hasattr(response, "filter_value")
+        assert not hasattr(response, "filter_runtime_seconds")
+        assert not hasattr(response, "filter_full")
 
     def test_message_b5_notify2_0x7e_temperature_parse(self) -> None:
         """Test 0x7e tag parsing for the model-22013279 temperature layout."""

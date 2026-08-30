@@ -107,9 +107,16 @@ MODE_POWER_TEMPERATURE_SCALE = 2
 WIND_STRAIGHT_VALUE = 0x01
 YB_WIND_AVOID_VALUE = 0x02
 LIGHT_SENSITIVE_ENABLED_VALUE = 0x03
-FILTER_LEVEL_INDEX = 1
-FILTER_VALUE_INDEX = 10
-FILTER_MIN_PAYLOAD_LENGTH = FILTER_VALUE_INDEX + 1
+MODEL_220F4047_FILTER_TAG = 0x003D
+MODEL_220F4047_FILTER_SECOND_INDEX = 0
+MODEL_220F4047_FILTER_MINUTE_INDEX = 1
+MODEL_220F4047_FILTER_HOUR_LOW_INDEX = 2
+MODEL_220F4047_FILTER_HOUR_HIGH_INDEX = 3
+MODEL_220F4047_FILTER_FULL_INDEX = 4
+MODEL_220F4047_FILTER_PAYLOAD_LENGTH = 5
+MODEL_220F4047_FILTER_HOUR_BASE = 100
+SECONDS_PER_MINUTE = 60
+MINUTES_PER_HOUR = 60
 
 # Model 220F4047 / subtype 8 uses the property layout published by Midea's
 # subtype-8 Lua adapter. These swing tags are deliberately separate from the
@@ -622,9 +629,9 @@ class NewProtocolLightSensitiveQuery(NewProtocolQuery):
 
 
 class NewProtocolFilterQuery(NewProtocolQuery):
-    """Query the filter level and cleanliness value independently."""
+    """Query subtype-8 filter runtime and full-dust state independently."""
 
-    _query_params = (NewProtocolTags.filter_level,)
+    _query_params = (MODEL_220F4047_FILTER_TAG,)
 
 
 class MessageSubProtocol(MessageACBase):
@@ -970,6 +977,7 @@ class NewProtocolSet(MessageACBase):
         self.power_saving: bool | None = None
         self.wind_straight: bool | None = None
         self.wind_avoid: bool | None = None
+        self.nobody_energy_save_tag: bool | None = None
         self.light_sensitive: int | None = None
         self.screen_display_alternate: bytes | None = None
         self.fresh_air_1: bytes | None = None
@@ -1132,6 +1140,14 @@ class NewProtocolSet(MessageACBase):
                 NewProtocolMessageBody.pack(
                     param=NewProtocolTags.wind_avoid,
                     value=bytearray([0x01 if self.wind_avoid else 0x00]),
+                ),
+            )
+        if self.nobody_energy_save_tag is not None:
+            pack_count += 1
+            payload.extend(
+                NewProtocolMessageBody.pack(
+                    param=NewProtocolTags.nobody_energy_save_tag,
+                    value=bytearray([int(self.nobody_energy_save_tag)]),
                 ),
             )
         if self.light_sensitive is not None:
@@ -1442,11 +1458,21 @@ class PropertiesBody(NewProtocolMessageBody):
             # The model script exposes this byte unchanged. Preserve it so the
             # first real-device capture can establish its on/off value mapping.
             self.light_sensitive = params[NewProtocolTags.light_sensitive][0]
-        if NewProtocolTags.filter_level in params:
-            filter_data = params[NewProtocolTags.filter_level]
-            if len(filter_data) >= FILTER_MIN_PAYLOAD_LENGTH:
-                self.filter_level = filter_data[FILTER_LEVEL_INDEX]
-                self.filter_value = filter_data[FILTER_VALUE_INDEX]
+        if MODEL_220F4047_FILTER_TAG in params:
+            filter_data = params[MODEL_220F4047_FILTER_TAG]
+            if len(filter_data) >= MODEL_220F4047_FILTER_PAYLOAD_LENGTH:
+                filter_hours = (
+                    filter_data[MODEL_220F4047_FILTER_HOUR_HIGH_INDEX]
+                    * MODEL_220F4047_FILTER_HOUR_BASE
+                    + filter_data[MODEL_220F4047_FILTER_HOUR_LOW_INDEX]
+                )
+                self.filter_runtime_seconds = (
+                    filter_hours * MINUTES_PER_HOUR * SECONDS_PER_MINUTE
+                    + filter_data[MODEL_220F4047_FILTER_MINUTE_INDEX]
+                    * SECONDS_PER_MINUTE
+                    + filter_data[MODEL_220F4047_FILTER_SECOND_INDEX]
+                )
+                self.filter_full = filter_data[MODEL_220F4047_FILTER_FULL_INDEX] > 0
 
     def _parse_220f4047_operating_snapshot(self, power_data: bytearray) -> None:
         """Decode the four-byte aggregate operating snapshot when present."""
