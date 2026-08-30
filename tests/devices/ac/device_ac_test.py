@@ -305,32 +305,32 @@ class TestMideaACDevice:
             (
                 DeviceAttributes.power,
                 True,
-                (True, 2, 16.5, 100),
+                (True, None, None, None),
             ),
             (
                 DeviceAttributes.power,
                 False,
-                (False, 2, 16.5, 100),
+                (False, None, None, None),
             ),
             (
                 DeviceAttributes.target_temperature,
                 18.5,
-                (False, 2, 18.5, 100),
+                (None, None, 18.5, None),
             ),
             (
                 DeviceAttributes.fan_speed,
                 60,
-                (False, 2, 16.5, 60),
+                (None, None, None, 60),
             ),
         ],
     )
-    def test_220f4047_operating_attributes_use_grouped_property(
+    def test_220f4047_operating_attributes_use_independent_properties(
         self,
         attribute: DeviceAttributes,
         value: bool | float,
-        expected: tuple[bool, int, float, int],
+        expected: tuple[bool | None, int | None, float | None, int | None],
     ) -> None:
-        """Only the requested field changes in the exact-model B0 property."""
+        """Only the requested subtype-8 operating property is emitted."""
         device = self._make_device("220F4047", 8)
         device._attributes[DeviceAttributes.power] = False
         device._attributes[DeviceAttributes.mode] = 2
@@ -342,7 +342,12 @@ class TestMideaACDevice:
 
         message = build_send.call_args.args[0]
         assert isinstance(message, NewProtocolSet)
-        assert message.mode_power == expected
+        assert (
+            message.operating_power,
+            message.operating_mode,
+            message.operating_target_temperature,
+            message.operating_fan_speed,
+        ) == expected
         assert message.prompt_tone is None
 
     @pytest.mark.parametrize(
@@ -413,8 +418,10 @@ class TestMideaACDevice:
         assert message.swing_horizontal is False
         assert bool(message.prompt_tone)
 
-    def test_220f4047_mode_then_temperature_keeps_grouped_command_on(self) -> None:
-        """A mode edge updates the cache used by an immediate temperature write."""
+    def test_220f4047_mode_then_temperature_does_not_rewrite_other_fields(
+        self,
+    ) -> None:
+        """A rapid temperature write cannot overwrite power, mode, or fan speed."""
         device = self._make_device("220F4047", 8)
         device._attributes[DeviceAttributes.power] = False
         device._attributes[DeviceAttributes.mode] = DRY_MODE
@@ -425,21 +432,27 @@ class TestMideaACDevice:
             device.set_attribute(DeviceAttributes.mode, 2)
             mode_message = build_send.call_args.args[0]
             assert isinstance(mode_message, NewProtocolSet)
-            assert mode_message.mode_power == (True, 2, 26.0, 102)
+            assert mode_message.operating_power is True
+            assert mode_message.operating_mode == 2
+            assert mode_message.operating_target_temperature is None
+            assert mode_message.operating_fan_speed == 102
             assert device.attributes[DeviceAttributes.power] is True
             assert device.attributes[DeviceAttributes.mode] == 2
 
             device.set_target_temperature(21.5, None)
             temperature_message = build_send.call_args.args[0]
             assert isinstance(temperature_message, NewProtocolSet)
-            assert temperature_message.mode_power == (True, 2, 21.5, 102)
+            assert temperature_message.operating_power is None
+            assert temperature_message.operating_mode is None
+            assert temperature_message.operating_target_temperature == 21.5
+            assert temperature_message.operating_fan_speed is None
 
     @pytest.mark.parametrize("mode", [None, 4])
-    def test_220f4047_set_target_temperature_uses_grouped_property(
+    def test_220f4047_set_target_temperature_uses_independent_properties(
         self,
         mode: int | None,
     ) -> None:
-        """The climate temperature API uses the same atomic operating property."""
+        """The climate API emits temperature plus only an explicit mode edge."""
         device = self._make_device("220F4047", 8)
         device._attributes[DeviceAttributes.power] = False
         device._attributes[DeviceAttributes.mode] = 2
@@ -451,15 +464,20 @@ class TestMideaACDevice:
 
         message = build_send.call_args.args[0]
         assert isinstance(message, NewProtocolSet)
-        assert message.mode_power == (
-            mode is not None,
-            2 if mode is None else mode,
+        assert (
+            message.operating_power,
+            message.operating_mode,
+            message.operating_target_temperature,
+            message.operating_fan_speed,
+        ) == (
+            True if mode is not None else None,
+            mode,
             18.5,
-            100,
+            None,
         )
 
     @pytest.mark.parametrize(("model", "subtype"), [("220F4047", 1), ("other", 8)])
-    def test_grouped_mode_power_control_is_gated_by_exact_model(
+    def test_operating_property_control_is_gated_by_exact_model(
         self,
         model: str,
         subtype: int,

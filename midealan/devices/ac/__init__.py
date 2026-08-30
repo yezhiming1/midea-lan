@@ -174,7 +174,7 @@ class ACModelCapabilities:
     has_person_airflow_control: bool = False
     has_light_sensitive_control: bool = False
     has_absolute_screen_display_control: bool = False
-    has_new_mode_power_control: bool = False
+    has_new_operating_property_control: bool = False
     has_220f4047_core_property_controls: bool = False
     c0_indoor_temperature_offset: int = C0_DEFAULT_TEMPERATURE_OFFSET
     c0_invalid_outdoor_temperature_values: frozenset[int] = (
@@ -220,7 +220,7 @@ AC_MODEL_CAPABILITIES = {
         has_person_airflow_control=True,
         has_light_sensitive_control=True,
         has_absolute_screen_display_control=True,
-        has_new_mode_power_control=True,
+        has_new_operating_property_control=True,
         has_220f4047_core_property_controls=True,
         c0_indoor_temperature_offset=0,
         c0_invalid_outdoor_temperature_values=frozenset(
@@ -805,7 +805,7 @@ class MideaACDevice(MideaDevice):
 
         return message
 
-    def _make_mode_power_message_set(
+    def _make_operating_property_message_set(
         self,
         *,
         power: bool | None = None,
@@ -813,34 +813,20 @@ class MideaACDevice(MideaDevice):
         target_temperature: float | None = None,
         fan_speed: int | None = None,
     ) -> NewProtocolSet:
-        """Build the exact-model B0 grouped power and operating-mode command."""
+        """Build exact-model independent B0 operating-property writes."""
         message = NewProtocolSet(self._message_protocol_version)
-        message.mode_power = (
-            bool(
-                self._attributes[DeviceAttributes.power] if power is None else power,
-            ),
-            int(
-                self._attributes[DeviceAttributes.mode] if mode is None else mode,
-            ),
-            float(
-                self._attributes[DeviceAttributes.target_temperature]
-                if target_temperature is None
-                else target_temperature,
-            ),
-            int(
-                self._attributes[DeviceAttributes.fan_speed]
-                if fan_speed is None
-                else fan_speed,
-            ),
-        )
+        message.operating_power = power
+        message.operating_mode = mode
+        message.operating_target_temperature = target_temperature
+        message.operating_fan_speed = fan_speed
         return message
 
-    def _make_mode_power_attribute_message(
+    def _make_operating_attribute_message(
         self,
         attr: str,
         value: bool | float | str,
     ) -> NewProtocolSet:
-        """Build a grouped command with one requested operating-field override."""
+        """Build one or more independent operating-property writes."""
         power: bool | None = None
         mode: int | None = None
         target_temperature: float | None = None
@@ -859,7 +845,7 @@ class MideaACDevice(MideaDevice):
             target_temperature = float(value)
         else:
             fan_speed = int(value)
-        return self._make_mode_power_message_set(
+        return self._make_operating_property_message_set(
             power=power,
             mode=mode,
             target_temperature=target_temperature,
@@ -1117,13 +1103,17 @@ class MideaACDevice(MideaDevice):
                     "[%s] Power saving is unsupported by the AC subprotocol",
                     self.device_id,
                 )
-            elif self._model_capabilities.has_new_mode_power_control and attr in {
-                DeviceAttributes.power,
-                DeviceAttributes.mode,
-                DeviceAttributes.target_temperature,
-                DeviceAttributes.fan_speed,
-            }:
-                message = self._make_mode_power_attribute_message(attr, value)
+            elif (
+                self._model_capabilities.has_new_operating_property_control
+                and attr
+                in {
+                    DeviceAttributes.power,
+                    DeviceAttributes.mode,
+                    DeviceAttributes.target_temperature,
+                    DeviceAttributes.fan_speed,
+                }
+            ):
+                message = self._make_operating_attribute_message(attr, value)
             elif attr in self._attributes:
                 message = self.make_message_uniq_set()
                 if attr in [
@@ -1212,8 +1202,8 @@ class MideaACDevice(MideaDevice):
     ) -> None:
         """Midea AC device set target temperature."""
         message: MessageSubProtocolSet | MessageSet | NewProtocolSet
-        if self._model_capabilities.has_new_mode_power_control:
-            message = self._make_mode_power_message_set(
+        if self._model_capabilities.has_new_operating_property_control:
+            message = self._make_operating_property_message_set(
                 power=True if mode is not None else None,
                 mode=mode,
                 target_temperature=target_temperature,

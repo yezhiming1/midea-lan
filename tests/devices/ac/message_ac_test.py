@@ -9,9 +9,13 @@ from midealan.devices.ac.message import (
     MODEL_220F4047_COOL_HOT_SENSE_TAG,
     MODEL_220F4047_DRY_TAG,
     MODEL_220F4047_ECO_TAG,
+    MODEL_220F4047_FAN_SPEED_TAG,
+    MODEL_220F4047_MODE_TAG,
     MODEL_220F4047_POWER_SAVING_TAG,
+    MODEL_220F4047_POWER_TAG,
     MODEL_220F4047_SWING_LR_TAG,
     MODEL_220F4047_SWING_UD_TAG,
+    MODEL_220F4047_TARGET_TEMPERATURE_TAG,
     MODEL_220F4047_WIND_DEFLECTOR_TAG,
     CapabilitiesQuery,
     CapabilityBody,
@@ -506,25 +510,37 @@ class TestNewProtocolSetModelControls:
     """Test model-gated person-airflow and smart-light payloads."""
 
     @pytest.mark.parametrize(("power", "expected_power"), [(True, 0x01), (False, 0x00)])
-    def test_mode_power_property_payload(
+    def test_operating_properties_follow_lua_adapter_layout(
         self,
         power: bool,
         expected_power: int,
     ) -> None:
-        """The grouped operating property keeps the App's four-byte layout."""
+        """Operating values use four independent one-byte subtype-8 properties."""
         message = NewProtocolSet(protocol_version=ProtocolVersion.V1)
-        message.mode_power = (power, 2, 16.5, 100)
+        message.operating_power = power
+        message.operating_mode = 2
+        message.operating_target_temperature = 16.5
+        message.operating_fan_speed = 100
 
-        assert message.body[:9] == bytearray(
+        assert message.body[:18] == bytearray(
             [
                 0xB0,
-                0x01,
-                NewProtocolTags.mode_power & 0xFF,
-                NewProtocolTags.mode_power >> 8,
                 0x04,
+                MODEL_220F4047_POWER_TAG,
+                0x00,
+                0x01,
                 expected_power,
+                MODEL_220F4047_MODE_TAG,
+                0x00,
+                0x01,
                 0x02,
+                MODEL_220F4047_TARGET_TEMPERATURE_TAG,
+                0x00,
+                0x01,
                 0x21,
+                MODEL_220F4047_FAN_SPEED_TAG,
+                0x00,
+                0x01,
                 0x64,
             ],
         )

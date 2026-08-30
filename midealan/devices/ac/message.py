@@ -122,6 +122,10 @@ MODEL_220F4047_ECO_TAG = 0x000D
 MODEL_220F4047_DRY_TAG = 0x0010
 MODEL_220F4047_COOL_HOT_SENSE_TAG = 0x0021
 MODEL_220F4047_POWER_SAVING_TAG = 0x0050
+MODEL_220F4047_POWER_TAG = 0x0001
+MODEL_220F4047_MODE_TAG = 0x0002
+MODEL_220F4047_TARGET_TEMPERATURE_TAG = 0x0003
+MODEL_220F4047_FAN_SPEED_TAG = 0x0006
 MODEL_220F4047_SWING_ENABLED_VALUE = 0x03
 MODEL_220F4047_UNCHANGED_DEFLECTOR_VALUE = 0xFF
 MODEL_220F4047_DEFLECTOR_PAYLOAD_LENGTH = 2
@@ -169,7 +173,6 @@ class PowerFormats(IntEnum):
 class NewProtocolTags(IntEnum):
     """New protocol tags in query and response."""
 
-    mode_power = 0x0001
     wind_ud_angle = 0x0009
     wind_lr_angle = 0x000A
     comfort_sleep = 0x0011
@@ -935,7 +938,10 @@ class NewProtocolSet(MessageACBase):
         self.indirect_wind: bytes | None = None
         self.prompt_tone: bytes | None = None
         self.breezeless: bytes | None = None
-        self.mode_power: tuple[bool, int, float, int] | None = None
+        self.operating_power: bool | None = None
+        self.operating_mode: int | None = None
+        self.operating_target_temperature: float | None = None
+        self.operating_fan_speed: int | None = None
         self.swing_vertical: bool | None = None
         self.swing_horizontal: bool | None = None
         self.wind_deflector_ud: int | None = None
@@ -992,6 +998,38 @@ class NewProtocolSet(MessageACBase):
             ),
         )
 
+    def _pack_220f4047_operating_properties(self) -> tuple[int, bytearray]:
+        """Pack the subtype-8 operating fields as independent B0 properties."""
+        values = (
+            (
+                MODEL_220F4047_POWER_TAG,
+                None if self.operating_power is None else int(self.operating_power),
+            ),
+            (MODEL_220F4047_MODE_TAG, self.operating_mode),
+            (
+                MODEL_220F4047_TARGET_TEMPERATURE_TAG,
+                None
+                if self.operating_target_temperature is None
+                else round(
+                    self.operating_target_temperature * MODE_POWER_TEMPERATURE_SCALE,
+                ),
+            ),
+            (MODEL_220F4047_FAN_SPEED_TAG, self.operating_fan_speed),
+        )
+        pack_count = 0
+        payload = bytearray()
+        for param, value in values:
+            if value is None:
+                continue
+            pack_count += 1
+            payload.extend(
+                NewProtocolMessageBody.pack(
+                    param=param,
+                    value=bytearray([int(value)]),
+                ),
+            )
+        return pack_count, payload
+
     def _pack_220f4047_core_properties(self) -> tuple[int, bytearray]:
         """Pack exact-model properties and return their count and bytes."""
         pack_count = 0
@@ -1037,22 +1075,11 @@ class NewProtocolSet(MessageACBase):
     def _body(self) -> bytearray:
         pack_count = 0
         payload = bytearray([0x00])
-        if self.mode_power is not None:
-            power, mode, target_temperature, fan_speed = self.mode_power
-            pack_count += 1
-            payload.extend(
-                NewProtocolMessageBody.pack(
-                    param=NewProtocolTags.mode_power,
-                    value=bytearray(
-                        [
-                            int(power),
-                            int(mode),
-                            round(target_temperature * MODE_POWER_TEMPERATURE_SCALE),
-                            int(fan_speed),
-                        ],
-                    ),
-                ),
-            )
+        operating_pack_count, operating_payload = (
+            self._pack_220f4047_operating_properties()
+        )
+        pack_count += operating_pack_count
+        payload.extend(operating_payload)
         core_pack_count, core_payload = self._pack_220f4047_core_properties()
         pack_count += core_pack_count
         payload.extend(core_payload)
