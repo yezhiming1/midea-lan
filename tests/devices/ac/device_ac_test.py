@@ -435,14 +435,22 @@ class TestMideaACDevice:
 
         with patch.object(device, "build_send") as build_send:
             device.set_attribute(DeviceAttributes.mode, 2)
-            mode_message = build_send.call_args.args[0]
+            assert build_send.call_count == 2
+            power_message = build_send.call_args_list[0].args[0]
+            mode_message = build_send.call_args_list[1].args[0]
+            assert isinstance(power_message, NewProtocolSet)
+            assert power_message.operating_power is True
+            assert power_message.operating_mode is None
+            assert power_message.operating_target_temperature is None
+            assert power_message.operating_fan_speed is None
             assert isinstance(mode_message, NewProtocolSet)
-            assert mode_message.operating_power is True
+            assert mode_message.operating_power is None
             assert mode_message.operating_mode == 2
             assert mode_message.operating_target_temperature is None
-            assert mode_message.operating_fan_speed == 102
+            assert mode_message.operating_fan_speed is None
             assert device.attributes[DeviceAttributes.power] is True
             assert device.attributes[DeviceAttributes.mode] == 2
+            assert device.attributes[DeviceAttributes.fan_speed] == 40
 
             device.set_target_temperature(21.5, None)
             temperature_message = build_send.call_args.args[0]
@@ -451,6 +459,22 @@ class TestMideaACDevice:
             assert temperature_message.operating_mode is None
             assert temperature_message.operating_target_temperature == 21.5
             assert temperature_message.operating_fan_speed is None
+
+    def test_220f4047_powered_mode_change_sends_only_mode(self) -> None:
+        """A powered unit must not receive a redundant power property."""
+        device = self._make_device("220F4047", 8)
+        device._attributes[DeviceAttributes.power] = True
+
+        with patch.object(device, "build_send") as build_send:
+            device.set_attribute(DeviceAttributes.mode, 2)
+
+        build_send.assert_called_once()
+        message = build_send.call_args.args[0]
+        assert isinstance(message, NewProtocolSet)
+        assert message.operating_power is None
+        assert message.operating_mode == 2
+        assert message.operating_target_temperature is None
+        assert message.operating_fan_speed is None
 
     @pytest.mark.parametrize("mode", [None, 4])
     def test_220f4047_set_target_temperature_uses_independent_properties(
@@ -467,19 +491,23 @@ class TestMideaACDevice:
         with patch.object(device, "build_send") as build_send:
             device.set_target_temperature(18.5, mode)
 
-        message = build_send.call_args.args[0]
-        assert isinstance(message, NewProtocolSet)
-        assert (
-            message.operating_power,
-            message.operating_mode,
-            message.operating_target_temperature,
-            message.operating_fan_speed,
-        ) == (
-            True if mode is not None else None,
-            mode,
-            18.5,
-            None,
-        )
+        messages = [call.args[0] for call in build_send.call_args_list]
+        assert all(isinstance(message, NewProtocolSet) for message in messages)
+        if mode is None:
+            assert len(messages) == 1
+        else:
+            assert len(messages) == 3
+            assert (
+                messages[0].operating_power,
+                messages[0].operating_mode,
+                messages[1].operating_power,
+                messages[1].operating_mode,
+            ) == (True, None, None, mode)
+        temperature_message = messages[-1]
+        assert temperature_message.operating_power is None
+        assert temperature_message.operating_mode is None
+        assert temperature_message.operating_target_temperature == 18.5
+        assert temperature_message.operating_fan_speed is None
 
     @pytest.mark.parametrize(("model", "subtype"), [("220F4047", 1), ("other", 8)])
     def test_operating_property_control_is_gated_by_exact_model(

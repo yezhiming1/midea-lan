@@ -836,11 +836,11 @@ class MideaACDevice(MideaDevice):
         if attr == DeviceAttributes.power:
             power = bool(value)
         elif attr == DeviceAttributes.mode:
-            power = True
+            if not self._attributes[DeviceAttributes.power]:
+                self.build_send(
+                    self._make_operating_property_message_set(power=True),
+                )
             mode = int(value)
-            if self._attributes[DeviceAttributes.mode] == DRY_MODE:
-                fan_speed = 102
-                self._attributes[DeviceAttributes.fan_speed] = fan_speed
             self._attributes[DeviceAttributes.power] = True
             self._attributes[DeviceAttributes.mode] = mode
         elif attr == DeviceAttributes.target_temperature:
@@ -1205,9 +1205,17 @@ class MideaACDevice(MideaDevice):
         """Midea AC device set target temperature."""
         message: MessageSubProtocolSet | MessageSet | NewProtocolSet
         if self._model_capabilities.has_new_operating_property_control:
+            if mode is not None:
+                if not self._attributes[DeviceAttributes.power]:
+                    self.build_send(
+                        self._make_operating_property_message_set(power=True),
+                    )
+                self.build_send(
+                    self._make_operating_property_message_set(mode=mode),
+                )
+                self._attributes[DeviceAttributes.power] = True
+                self._attributes[DeviceAttributes.mode] = mode
             message = self._make_operating_property_message_set(
-                power=True if mode is not None else None,
-                mode=mode,
                 target_temperature=target_temperature,
             )
         else:
