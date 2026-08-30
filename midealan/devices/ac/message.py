@@ -126,6 +126,11 @@ MODEL_220F4047_POWER_TAG = 0x0001
 MODEL_220F4047_MODE_TAG = 0x0002
 MODEL_220F4047_TARGET_TEMPERATURE_TAG = 0x0003
 MODEL_220F4047_FAN_SPEED_TAG = 0x0006
+MODEL_220F4047_MIN_MODE = 1
+MODEL_220F4047_MAX_MODE = 6
+MODEL_220F4047_MIN_TARGET_TEMPERATURE = 16
+MODEL_220F4047_MAX_TARGET_TEMPERATURE = 32
+MODEL_220F4047_MAX_FAN_SPEED = 102
 MODEL_220F4047_SWING_ENABLED_VALUE = 0x03
 MODEL_220F4047_UNCHANGED_DEFLECTOR_VALUE = 0xFF
 MODEL_220F4047_DEFLECTOR_PAYLOAD_LENGTH = 2
@@ -565,6 +570,17 @@ class NewProtocolSelfCleanQuery(NewProtocolQuery):
     """
 
     _query_params = (NewProtocolTags.self_clean,)
+
+
+class NewProtocolOperatingQuery(NewProtocolQuery):
+    """Query subtype-8 power, mode, setpoint, and fan state together."""
+
+    _query_params = (
+        MODEL_220F4047_POWER_TAG,
+        MODEL_220F4047_MODE_TAG,
+        MODEL_220F4047_TARGET_TEMPERATURE_TAG,
+        MODEL_220F4047_FAN_SPEED_TAG,
+    )
 
 
 class NewProtocolComfortSleepQuery(NewProtocolQuery):
@@ -1434,6 +1450,24 @@ class PropertiesBody(NewProtocolMessageBody):
         params: Mapping[int, bytearray],
     ) -> None:
         """Decode the source-backed subtype-8 controls for model 220F4047."""
+        if power_data := params.get(MODEL_220F4047_POWER_TAG):
+            self.power = power_data[0] > 0
+        if mode_data := params.get(MODEL_220F4047_MODE_TAG):
+            mode = mode_data[0]
+            if MODEL_220F4047_MIN_MODE <= mode <= MODEL_220F4047_MAX_MODE:
+                self.mode = mode
+        if temperature_data := params.get(MODEL_220F4047_TARGET_TEMPERATURE_TAG):
+            target_temperature = temperature_data[0] / MODE_POWER_TEMPERATURE_SCALE
+            if (
+                MODEL_220F4047_MIN_TARGET_TEMPERATURE
+                <= target_temperature
+                <= MODEL_220F4047_MAX_TARGET_TEMPERATURE
+            ):
+                self.target_temperature = target_temperature
+        if fan_data := params.get(MODEL_220F4047_FAN_SPEED_TAG):
+            fan_speed = fan_data[0]
+            if 0 <= fan_speed <= MODEL_220F4047_MAX_FAN_SPEED:
+                self.fan_speed = fan_speed
         if MODEL_220F4047_SWING_UD_TAG in params:
             self.swing_vertical = params[MODEL_220F4047_SWING_UD_TAG][0] > 0
         if MODEL_220F4047_SWING_LR_TAG in params:

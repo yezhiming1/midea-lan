@@ -38,6 +38,7 @@ from midealan.devices.ac.message import (
     NewProtocolLightSensitiveQuery,
     NewProtocolNobodyEnergySaveQuery,
     NewProtocolNobodyEnergySaveTagQuery,
+    NewProtocolOperatingQuery,
     NewProtocolQuery,
     NewProtocolSelfCleanQuery,
     NewProtocolSet,
@@ -405,6 +406,25 @@ class TestNewProtocolQuery:
         expected_body = bytearray([0xB1, 0x01, tag & 0xFF, tag >> 8])
 
         assert msg.body[:-2] == expected_body
+
+    def test_220f4047_operating_state_query_uses_independent_tags(self) -> None:
+        """The diagnostic query asks for all four subtype-8 operating fields."""
+        message = NewProtocolOperatingQuery(ProtocolVersion.V1)
+
+        assert message.body[:-2] == bytearray(
+            [
+                0xB1,
+                0x04,
+                MODEL_220F4047_POWER_TAG,
+                0x00,
+                MODEL_220F4047_MODE_TAG,
+                0x00,
+                MODEL_220F4047_TARGET_TEMPERATURE_TAG,
+                0x00,
+                MODEL_220F4047_FAN_SPEED_TAG,
+                0x00,
+            ],
+        )
 
     def test_220f4047_query_uses_subtype_8_core_property_tags(self) -> None:
         """The exact model replaces generic fixed-angle tags with live controls."""

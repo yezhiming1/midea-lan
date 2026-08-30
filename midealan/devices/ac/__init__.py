@@ -31,6 +31,7 @@ from .message import (
     NewProtocolLightSensitiveQuery,
     NewProtocolNobodyEnergySaveQuery,
     NewProtocolNobodyEnergySaveTagQuery,
+    NewProtocolOperatingQuery,
     NewProtocolQuery,
     NewProtocolSelfCleanQuery,
     NewProtocolSet,
@@ -209,6 +210,7 @@ AC_MODEL_CAPABILITIES = {
         # tracks unsupported requests by class name, so one missing feature does
         # not suppress the other probe results or the existing combined query.
         additional_new_protocol_queries=(
+            NewProtocolOperatingQuery,
             NewProtocolComfortSleepQuery,
             NewProtocolWindStraightQuery,
             NewProtocolWindAvoidQuery,

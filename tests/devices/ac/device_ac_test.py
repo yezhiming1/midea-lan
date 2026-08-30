@@ -18,9 +18,13 @@ from midealan.devices.ac.message import (
     MODEL_220F4047_COOL_HOT_SENSE_TAG,
     MODEL_220F4047_DRY_TAG,
     MODEL_220F4047_ECO_TAG,
+    MODEL_220F4047_FAN_SPEED_TAG,
+    MODEL_220F4047_MODE_TAG,
     MODEL_220F4047_POWER_SAVING_TAG,
+    MODEL_220F4047_POWER_TAG,
     MODEL_220F4047_SWING_LR_TAG,
     MODEL_220F4047_SWING_UD_TAG,
+    MODEL_220F4047_TARGET_TEMPERATURE_TAG,
     MODEL_220F4047_WIND_DEFLECTOR_TAG,
     CapabilitiesAdditionalQuery,
     CapabilitiesQuery,
@@ -36,6 +40,7 @@ from midealan.devices.ac.message import (
     NewProtocolLightSensitiveQuery,
     NewProtocolNobodyEnergySaveQuery,
     NewProtocolNobodyEnergySaveTagQuery,
+    NewProtocolOperatingQuery,
     NewProtocolQuery,
     NewProtocolSelfCleanQuery,
     NewProtocolSet,
@@ -625,6 +630,7 @@ class TestMideaACDevice:
 
         assert probe_attributes <= device.attributes.keys()
         assert probe_query_types <= {type(query) for query in queries}
+        assert any(isinstance(query, NewProtocolOperatingQuery) for query in queries)
         assert {
             MODEL_220F4047_SWING_UD_TAG,
             MODEL_220F4047_SWING_LR_TAG,
@@ -690,6 +696,29 @@ class TestMideaACDevice:
         assert DeviceAttributes.dry.value not in other_status
         assert DeviceAttributes.cool_hot_sense.value not in other_status
         assert DeviceAttributes.power_saving.value not in other_status
+
+    def test_220f4047_operating_response_is_gated_by_exact_model(self) -> None:
+        """Only the exact model publishes the independent B1 operating state."""
+        response = self._new_protocol_response(
+            (MODEL_220F4047_POWER_TAG, bytes([0x01])),
+            (MODEL_220F4047_MODE_TAG, bytes([0x02])),
+            (MODEL_220F4047_TARGET_TEMPERATURE_TAG, bytes([0x22])),
+            (MODEL_220F4047_FAN_SPEED_TAG, bytes([0x63])),
+        )
+
+        device = self._make_device("220F4047", 8)
+        status = device.process_message(response)
+        assert status[DeviceAttributes.power.value] is True
+        assert status[DeviceAttributes.mode.value] == 2
+        assert status[DeviceAttributes.target_temperature.value] == 17
+        assert status[DeviceAttributes.fan_speed.value] == 99
+
+        other = self._make_device("220F4047", 1)
+        other_status = other.process_message(response)
+        assert DeviceAttributes.power.value not in other_status
+        assert DeviceAttributes.mode.value not in other_status
+        assert DeviceAttributes.target_temperature.value not in other_status
+        assert DeviceAttributes.fan_speed.value not in other_status
 
     @pytest.mark.parametrize(
         ("mode", "toward", "avoid"),
