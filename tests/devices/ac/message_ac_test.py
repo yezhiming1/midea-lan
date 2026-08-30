@@ -530,12 +530,12 @@ class TestNewProtocolSetModelControls:
     """Test model-gated person-airflow and smart-light payloads."""
 
     @pytest.mark.parametrize(("power", "expected_power"), [(True, 0x01), (False, 0x00)])
-    def test_operating_properties_follow_lua_adapter_layout(
+    def test_operating_properties_follow_verified_subtype_8_layout(
         self,
         power: bool,
         expected_power: int,
     ) -> None:
-        """Operating values use four independent one-byte subtype-8 properties."""
+        """Use independent subtype-8 properties and its verified temperature offset."""
         message = NewProtocolSet(protocol_version=ProtocolVersion.V1)
         message.operating_power = power
         message.operating_mode = 2
@@ -557,7 +557,7 @@ class TestNewProtocolSetModelControls:
                 MODEL_220F4047_TARGET_TEMPERATURE_TAG,
                 0x00,
                 0x01,
-                0x21,
+                0x53,
                 MODEL_220F4047_FAN_SPEED_TAG,
                 0x00,
                 0x01,

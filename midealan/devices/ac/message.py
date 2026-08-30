@@ -130,7 +130,9 @@ MODEL_220F4047_MIN_MODE = 1
 MODEL_220F4047_MAX_MODE = 6
 MODEL_220F4047_MIN_TARGET_TEMPERATURE = 16
 MODEL_220F4047_MAX_TARGET_TEMPERATURE = 32
+MODEL_220F4047_TARGET_TEMPERATURE_OFFSET = 50
 MODEL_220F4047_MAX_FAN_SPEED = 102
+MODEL_220F4047_OPERATING_SNAPSHOT_LENGTH = 4
 MODEL_220F4047_SWING_ENABLED_VALUE = 0x03
 MODEL_220F4047_UNCHANGED_DEFLECTOR_VALUE = 0xFF
 MODEL_220F4047_DEFLECTOR_PAYLOAD_LENGTH = 2
@@ -1028,7 +1030,8 @@ class NewProtocolSet(MessageACBase):
                 if self.operating_target_temperature is None
                 else round(
                     self.operating_target_temperature * MODE_POWER_TEMPERATURE_SCALE,
-                ),
+                )
+                + MODEL_220F4047_TARGET_TEMPERATURE_OFFSET,
             ),
             (MODEL_220F4047_FAN_SPEED_TAG, self.operating_fan_speed),
         )
@@ -1445,6 +1448,24 @@ class PropertiesBody(NewProtocolMessageBody):
                 self.filter_level = filter_data[FILTER_LEVEL_INDEX]
                 self.filter_value = filter_data[FILTER_VALUE_INDEX]
 
+    def _parse_220f4047_operating_snapshot(self, power_data: bytearray) -> None:
+        """Decode the four-byte aggregate operating snapshot when present."""
+        if len(power_data) < MODEL_220F4047_OPERATING_SNAPSHOT_LENGTH:
+            return
+        mode = power_data[1]
+        if MODEL_220F4047_MIN_MODE <= mode <= MODEL_220F4047_MAX_MODE:
+            self.mode = mode
+        target_temperature = power_data[2] / MODE_POWER_TEMPERATURE_SCALE
+        if (
+            MODEL_220F4047_MIN_TARGET_TEMPERATURE
+            <= target_temperature
+            <= MODEL_220F4047_MAX_TARGET_TEMPERATURE
+        ):
+            self.target_temperature = target_temperature
+        fan_speed = power_data[3]
+        if 0 <= fan_speed <= MODEL_220F4047_MAX_FAN_SPEED:
+            self.fan_speed = fan_speed
+
     def _parse_220f4047_core_properties(
         self,
         params: Mapping[int, bytearray],
@@ -1452,12 +1473,15 @@ class PropertiesBody(NewProtocolMessageBody):
         """Decode the source-backed subtype-8 controls for model 220F4047."""
         if power_data := params.get(MODEL_220F4047_POWER_TAG):
             self.power = power_data[0] > 0
+            self._parse_220f4047_operating_snapshot(power_data)
         if mode_data := params.get(MODEL_220F4047_MODE_TAG):
             mode = mode_data[0]
             if MODEL_220F4047_MIN_MODE <= mode <= MODEL_220F4047_MAX_MODE:
                 self.mode = mode
         if temperature_data := params.get(MODEL_220F4047_TARGET_TEMPERATURE_TAG):
-            target_temperature = temperature_data[0] / MODE_POWER_TEMPERATURE_SCALE
+            target_temperature = (
+                temperature_data[0] - MODEL_220F4047_TARGET_TEMPERATURE_OFFSET
+            ) / MODE_POWER_TEMPERATURE_SCALE
             if (
                 MODEL_220F4047_MIN_TARGET_TEMPERATURE
                 <= target_temperature

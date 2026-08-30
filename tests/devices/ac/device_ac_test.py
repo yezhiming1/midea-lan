@@ -702,7 +702,7 @@ class TestMideaACDevice:
         response = self._new_protocol_response(
             (MODEL_220F4047_POWER_TAG, bytes([0x01])),
             (MODEL_220F4047_MODE_TAG, bytes([0x02])),
-            (MODEL_220F4047_TARGET_TEMPERATURE_TAG, bytes([0x22])),
+            (MODEL_220F4047_TARGET_TEMPERATURE_TAG, bytes([0x54])),
             (MODEL_220F4047_FAN_SPEED_TAG, bytes([0x63])),
         )
 
@@ -719,6 +719,24 @@ class TestMideaACDevice:
         assert DeviceAttributes.mode.value not in other_status
         assert DeviceAttributes.target_temperature.value not in other_status
         assert DeviceAttributes.fan_speed.value not in other_status
+
+    def test_220f4047_operating_response_decodes_observed_combined_snapshot(
+        self,
+    ) -> None:
+        """Decode the aggregate and independent fields captured from the real unit."""
+        response = self._new_protocol_response(
+            (MODEL_220F4047_POWER_TAG, bytes([0x00, 0x05, 0x37, 0x66])),
+            (MODEL_220F4047_MODE_TAG, bytes([0x05])),
+            (MODEL_220F4047_TARGET_TEMPERATURE_TAG, bytes([0x69])),
+            (MODEL_220F4047_FAN_SPEED_TAG, bytes([0x66])),
+        )
+
+        device = self._make_device("220F4047", 8)
+        status = device.process_message(response)
+        assert status[DeviceAttributes.power.value] is False
+        assert status[DeviceAttributes.mode.value] == 5
+        assert status[DeviceAttributes.target_temperature.value] == 27.5
+        assert status[DeviceAttributes.fan_speed.value] == 102
 
     @pytest.mark.parametrize(
         ("mode", "toward", "avoid"),
