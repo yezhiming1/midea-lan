@@ -111,6 +111,30 @@ FILTER_LEVEL_INDEX = 1
 FILTER_VALUE_INDEX = 10
 FILTER_MIN_PAYLOAD_LENGTH = FILTER_VALUE_INDEX + 1
 
+# Model 220F4047 / subtype 8 uses the property layout published by Midea's
+# subtype-8 Lua adapter. These swing tags are deliberately separate from the
+# generic fixed-angle tags (0x0009/0x000A), whose meanings overlap on other
+# firmware.
+MODEL_220F4047_SWING_UD_TAG = 0x0008
+MODEL_220F4047_SWING_LR_TAG = 0x0009
+MODEL_220F4047_WIND_DEFLECTOR_TAG = 0x000A
+MODEL_220F4047_ECO_TAG = 0x000D
+MODEL_220F4047_DRY_TAG = 0x0010
+MODEL_220F4047_COOL_HOT_SENSE_TAG = 0x0021
+MODEL_220F4047_POWER_SAVING_TAG = 0x0050
+MODEL_220F4047_SWING_ENABLED_VALUE = 0x03
+MODEL_220F4047_UNCHANGED_DEFLECTOR_VALUE = 0xFF
+MODEL_220F4047_DEFLECTOR_PAYLOAD_LENGTH = 2
+MODEL_220F4047_CORE_PROPERTY_TAGS = (
+    MODEL_220F4047_SWING_UD_TAG,
+    MODEL_220F4047_SWING_LR_TAG,
+    MODEL_220F4047_WIND_DEFLECTOR_TAG,
+    MODEL_220F4047_ECO_TAG,
+    MODEL_220F4047_DRY_TAG,
+    MODEL_220F4047_COOL_HOT_SENSE_TAG,
+    MODEL_220F4047_POWER_SAVING_TAG,
+)
+
 # B5 capability value semantics (reverse-engineered; see _parse_capabilities).
 # The raw byte of each capability is not a 0/1 flag; each has its own value set.
 B5_HEAT_MODE_VALUES = frozenset({1, 2, 4, 6, 7, 9, 10, 11, 12, 13})
@@ -484,6 +508,7 @@ class NewProtocolQuery(MessageACBase):
         protocol_version: int,
         *,
         supports_rate_select: bool = False,
+        supports_220f4047_core_properties: bool = False,
     ) -> None:
         """Initialize AC message new protocol query.
 
@@ -498,11 +523,27 @@ class NewProtocolQuery(MessageACBase):
             body_type=ListTypes.B1,
         )
         self._supports_rate_select = supports_rate_select
+        self._supports_220f4047_core_properties = supports_220f4047_core_properties
 
     @property
     def _body(self) -> bytearray:
 
-        params = list(self._query_params)
+        params: list[int] = list(self._query_params)
+        if self._supports_220f4047_core_properties:
+            # 0x0009 and 0x000A are fixed-angle properties on the generic
+            # protocol, but subtype 8 uses 0x0009 for horizontal swing and
+            # 0x000A for a two-byte fixed-direction pair. Avoid asking for the
+            # generic pair, then request the exact-model boolean controls.
+            params = [
+                param
+                for param in params
+                if param
+                not in {
+                    NewProtocolTags.wind_lr_angle,
+                    NewProtocolTags.wind_ud_angle,
+                }
+            ]
+            params.extend(MODEL_220F4047_CORE_PROPERTY_TAGS)
         if self._supports_rate_select:
             params.append(NewProtocolTags.rate_select)
 
@@ -895,6 +936,14 @@ class NewProtocolSet(MessageACBase):
         self.prompt_tone: bytes | None = None
         self.breezeless: bytes | None = None
         self.mode_power: tuple[bool, int, float, int] | None = None
+        self.swing_vertical: bool | None = None
+        self.swing_horizontal: bool | None = None
+        self.wind_deflector_ud: int | None = None
+        self.wind_deflector_lr: int | None = None
+        self.eco_mode: bool | None = None
+        self.dry: bool | None = None
+        self.cool_hot_sense: bool | None = None
+        self.power_saving: bool | None = None
         self.wind_straight: bool | None = None
         self.wind_avoid: bool | None = None
         self.light_sensitive: int | None = None
@@ -907,6 +956,82 @@ class NewProtocolSet(MessageACBase):
         self.out_silent: bool | None = None
         self.sound: bool | None = None
         self.self_clean: bool | None = None
+
+    def _220f4047_core_property_values(
+        self,
+    ) -> tuple[tuple[int, int | None], ...]:
+        """Return encoded exact-model property values without packing them."""
+        return (
+            (
+                MODEL_220F4047_SWING_UD_TAG,
+                None
+                if self.swing_vertical is None
+                else MODEL_220F4047_SWING_ENABLED_VALUE
+                if self.swing_vertical
+                else 0x00,
+            ),
+            (
+                MODEL_220F4047_SWING_LR_TAG,
+                None
+                if self.swing_horizontal is None
+                else MODEL_220F4047_SWING_ENABLED_VALUE
+                if self.swing_horizontal
+                else 0x00,
+            ),
+            (
+                MODEL_220F4047_ECO_TAG,
+                None if self.eco_mode is None else int(self.eco_mode),
+            ),
+            (
+                MODEL_220F4047_DRY_TAG,
+                None if self.dry is None else int(self.dry),
+            ),
+            (
+                MODEL_220F4047_POWER_SAVING_TAG,
+                None if self.power_saving is None else int(self.power_saving),
+            ),
+        )
+
+    def _pack_220f4047_core_properties(self) -> tuple[int, bytearray]:
+        """Pack exact-model properties and return their count and bytes."""
+        pack_count = 0
+        payload = bytearray()
+        for param, value in self._220f4047_core_property_values():
+            if value is None:
+                continue
+            pack_count += 1
+            payload.extend(
+                NewProtocolMessageBody.pack(
+                    param=param,
+                    value=bytearray([value]),
+                ),
+            )
+        if self.wind_deflector_ud is not None or self.wind_deflector_lr is not None:
+            pack_count += 1
+            payload.extend(
+                NewProtocolMessageBody.pack(
+                    param=MODEL_220F4047_WIND_DEFLECTOR_TAG,
+                    value=bytearray(
+                        [
+                            self.wind_deflector_ud
+                            if self.wind_deflector_ud is not None
+                            else MODEL_220F4047_UNCHANGED_DEFLECTOR_VALUE,
+                            self.wind_deflector_lr
+                            if self.wind_deflector_lr is not None
+                            else MODEL_220F4047_UNCHANGED_DEFLECTOR_VALUE,
+                        ],
+                    ),
+                ),
+            )
+        if self.cool_hot_sense is not None:
+            pack_count += 1
+            payload.extend(
+                NewProtocolMessageBody.pack(
+                    param=MODEL_220F4047_COOL_HOT_SENSE_TAG,
+                    value=bytearray([int(self.cool_hot_sense), *([0x00] * 7)]),
+                ),
+            )
+        return pack_count, payload
 
     @property
     def _body(self) -> bytearray:
@@ -928,6 +1053,9 @@ class NewProtocolSet(MessageACBase):
                     ),
                 ),
             )
+        core_pack_count, core_payload = self._pack_220f4047_core_properties()
+        pack_count += core_pack_count
+        payload.extend(core_payload)
         if self.breezeless is not None:
             pack_count += 1
             payload.extend(
@@ -1179,6 +1307,7 @@ class PropertiesBody(NewProtocolMessageBody):
         self,
         body: bytearray,
         new_protocol_temperature: bool = False,
+        supports_220f4047_core_properties: bool = False,
     ) -> None:
         """Initialize AC BX message body."""
         # PyPI 2026.8.0 still requires the body-type argument, while current
@@ -1211,10 +1340,13 @@ class PropertiesBody(NewProtocolMessageBody):
             data = params[NewProtocolTags.fresh_air_2]
             self.fresh_air_power = data[0] > 0
             self.fresh_air_fan_speed = data[1]
-        if NewProtocolTags.wind_lr_angle in params:
-            self.wind_lr_angle = params[NewProtocolTags.wind_lr_angle][0]
-        if NewProtocolTags.wind_ud_angle in params:
-            self.wind_ud_angle = params[NewProtocolTags.wind_ud_angle][0]
+        if supports_220f4047_core_properties:
+            self._parse_220f4047_core_properties(params)
+        else:
+            if NewProtocolTags.wind_lr_angle in params:
+                self.wind_lr_angle = params[NewProtocolTags.wind_lr_angle][0]
+            if NewProtocolTags.wind_ud_angle in params:
+                self.wind_ud_angle = params[NewProtocolTags.wind_ud_angle][0]
         if NewProtocolTags.rate_select in params:
             self.rate_select = params[NewProtocolTags.rate_select][0]
         if NewProtocolTags.out_silent in params:
@@ -1269,6 +1401,36 @@ class PropertiesBody(NewProtocolMessageBody):
             if len(filter_data) >= FILTER_MIN_PAYLOAD_LENGTH:
                 self.filter_level = filter_data[FILTER_LEVEL_INDEX]
                 self.filter_value = filter_data[FILTER_VALUE_INDEX]
+
+    def _parse_220f4047_core_properties(
+        self,
+        params: Mapping[int, bytearray],
+    ) -> None:
+        """Decode the source-backed subtype-8 controls for model 220F4047."""
+        if MODEL_220F4047_SWING_UD_TAG in params:
+            self.swing_vertical = params[MODEL_220F4047_SWING_UD_TAG][0] > 0
+        if MODEL_220F4047_SWING_LR_TAG in params:
+            self.swing_horizontal = params[MODEL_220F4047_SWING_LR_TAG][0] > 0
+        if MODEL_220F4047_WIND_DEFLECTOR_TAG in params:
+            deflector = params[MODEL_220F4047_WIND_DEFLECTOR_TAG]
+            if (
+                len(deflector) >= 1
+                and deflector[0] != MODEL_220F4047_UNCHANGED_DEFLECTOR_VALUE
+            ):
+                self.wind_ud_angle = deflector[0]
+            if (
+                len(deflector) >= MODEL_220F4047_DEFLECTOR_PAYLOAD_LENGTH
+                and deflector[1] != MODEL_220F4047_UNCHANGED_DEFLECTOR_VALUE
+            ):
+                self.wind_lr_angle = deflector[1]
+        if MODEL_220F4047_ECO_TAG in params:
+            self.eco_mode = params[MODEL_220F4047_ECO_TAG][0] > 0
+        if MODEL_220F4047_DRY_TAG in params:
+            self.dry = params[MODEL_220F4047_DRY_TAG][0] > 0
+        if MODEL_220F4047_COOL_HOT_SENSE_TAG in params:
+            self.cool_hot_sense = params[MODEL_220F4047_COOL_HOT_SENSE_TAG][0] > 0
+        if MODEL_220F4047_POWER_SAVING_TAG in params:
+            self.power_saving = params[MODEL_220F4047_POWER_SAVING_TAG][0] > 0
 
     def _parse_new_protocol_temperatures(self, data: bytearray) -> bool:
         """Decode setpoint and indoor temperature for model 22013279.
@@ -1750,6 +1912,7 @@ class MessageACResponse(MessageResponse):
         message: bytearray,
         power_analysis_method: int = 3,
         new_protocol_temperature: bool = False,
+        supports_220f4047_core_properties: bool = False,
         c0_indoor_temperature_offset: int = C0_DEFAULT_TEMPERATURE_OFFSET,
         c0_invalid_outdoor_temperature_values: frozenset[
             int
@@ -1789,7 +1952,11 @@ class MessageACResponse(MessageResponse):
             MessageType.notify2,
         ] and self.body_type in [ListTypes.B0, ListTypes.B1, ListTypes.B5]:
             self.set_body(
-                PropertiesBody(super().body, new_protocol_temperature),
+                PropertiesBody(
+                    super().body,
+                    new_protocol_temperature,
+                    supports_220f4047_core_properties,
+                ),
             )
         # dataType 0x02 and messageBytes[0] 0xC0
         # dataType 0x03 and messageBytes[0] 0xC0

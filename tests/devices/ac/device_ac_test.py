@@ -15,6 +15,13 @@ from midealan.devices.ac import (
     MideaACDevice,
 )
 from midealan.devices.ac.message import (
+    MODEL_220F4047_COOL_HOT_SENSE_TAG,
+    MODEL_220F4047_DRY_TAG,
+    MODEL_220F4047_ECO_TAG,
+    MODEL_220F4047_POWER_SAVING_TAG,
+    MODEL_220F4047_SWING_LR_TAG,
+    MODEL_220F4047_SWING_UD_TAG,
+    MODEL_220F4047_WIND_DEFLECTOR_TAG,
     CapabilitiesAdditionalQuery,
     CapabilitiesQuery,
     GroupOneQuery,
@@ -117,7 +124,7 @@ class TestMideaACDevice:
 
     @staticmethod
     def _new_protocol_response(
-        *properties: tuple[NewProtocolTags, bytes | bytearray],
+        *properties: tuple[int, bytes | bytearray],
     ) -> bytes:
         """Wrap B1 properties in a complete AC query frame."""
         body = bytearray([ListTypes.B1, len(properties)])
@@ -338,6 +345,74 @@ class TestMideaACDevice:
         assert message.mode_power == expected
         assert message.prompt_tone is None
 
+    @pytest.mark.parametrize(
+        ("attribute", "field"),
+        [
+            (DeviceAttributes.cool_hot_sense, "cool_hot_sense"),
+            (DeviceAttributes.dry, "dry"),
+            (DeviceAttributes.eco_mode, "eco_mode"),
+            (DeviceAttributes.power_saving, "power_saving"),
+        ],
+    )
+    def test_220f4047_boolean_controls_use_core_properties(
+        self,
+        attribute: DeviceAttributes,
+        field: str,
+    ) -> None:
+        """Exact-model toggles avoid the ignored whole-state packet."""
+        device = self._make_device("220F4047", 8)
+
+        with patch.object(device, "build_send") as build_send:
+            device.set_attribute(attribute, True)
+
+        message = build_send.call_args.args[0]
+        assert isinstance(message, NewProtocolSet)
+        assert getattr(message, field) is True
+        assert bool(message.prompt_tone)
+
+    @pytest.mark.parametrize(
+        ("attribute", "value", "field", "expected"),
+        [
+            (DeviceAttributes.wind_ud_angle, "up-mid", "wind_deflector_ud", 25),
+            (
+                DeviceAttributes.wind_lr_angle,
+                "right-mid",
+                "wind_deflector_lr",
+                75,
+            ),
+        ],
+    )
+    def test_220f4047_fixed_direction_uses_combined_deflector_property(
+        self,
+        attribute: DeviceAttributes,
+        value: str,
+        field: str,
+        expected: int,
+    ) -> None:
+        """One fixed-direction axis writes its byte and preserves the other axis."""
+        device = self._make_device("220F4047", 8)
+
+        with patch.object(device, "build_send") as build_send:
+            device.set_attribute(attribute, value)
+
+        message = build_send.call_args.args[0]
+        assert isinstance(message, NewProtocolSet)
+        assert getattr(message, field) == expected
+        assert bool(message.prompt_tone)
+
+    def test_220f4047_swing_uses_core_properties(self) -> None:
+        """Both swing flags are sent atomically with subtype-8 values."""
+        device = self._make_device("220F4047", 8)
+
+        with patch.object(device, "build_send") as build_send:
+            device.set_swing(True, False)
+
+        message = build_send.call_args.args[0]
+        assert isinstance(message, NewProtocolSet)
+        assert message.swing_vertical is True
+        assert message.swing_horizontal is False
+        assert bool(message.prompt_tone)
+
     def test_220f4047_mode_then_temperature_keeps_grouped_command_on(self) -> None:
         """A mode edge updates the cache used by an immediate temperature write."""
         device = self._make_device("220F4047", 8)
@@ -523,9 +598,24 @@ class TestMideaACDevice:
         }
 
         queries = device.build_query()
+        core_query = next(query for query in queries if type(query) is NewProtocolQuery)
+        core_body = core_query._body
+        core_params = {
+            core_body[index] | (core_body[index + 1] << 8)
+            for index in range(1, len(core_body), 2)
+        }
 
         assert probe_attributes <= device.attributes.keys()
         assert probe_query_types <= {type(query) for query in queries}
+        assert {
+            MODEL_220F4047_SWING_UD_TAG,
+            MODEL_220F4047_SWING_LR_TAG,
+            MODEL_220F4047_WIND_DEFLECTOR_TAG,
+            MODEL_220F4047_ECO_TAG,
+            MODEL_220F4047_DRY_TAG,
+            MODEL_220F4047_COOL_HOT_SENSE_TAG,
+            MODEL_220F4047_POWER_SAVING_TAG,
+        } <= core_params
         with patch.object(device, "build_send") as build_send:
             for attribute in probe_attributes:
                 device.set_attribute(attribute, True)
@@ -550,6 +640,38 @@ class TestMideaACDevice:
         assert DeviceAttributes.comfort_sleep.value not in other_status
         assert DeviceAttributes.wind_straight.value not in other_status
         assert DeviceAttributes.light_sensitive.value not in other_status
+
+    def test_220f4047_core_property_response_is_gated_by_exact_model(self) -> None:
+        """Only the exact model maps overlapping subtype-8 property tags."""
+        response = self._new_protocol_response(
+            (MODEL_220F4047_SWING_UD_TAG, bytes([0x03])),
+            (MODEL_220F4047_SWING_LR_TAG, bytes([0x00])),
+            (MODEL_220F4047_WIND_DEFLECTOR_TAG, bytes([25, 75])),
+            (MODEL_220F4047_ECO_TAG, bytes([0x01])),
+            (MODEL_220F4047_DRY_TAG, bytes([0x01])),
+            (MODEL_220F4047_COOL_HOT_SENSE_TAG, bytes([0x01, *([0x00] * 7)])),
+            (MODEL_220F4047_POWER_SAVING_TAG, bytes([0x01])),
+        )
+
+        device = self._make_device("220F4047", 8)
+        status = device.process_message(response)
+        assert status[DeviceAttributes.swing_vertical.value] is True
+        assert status[DeviceAttributes.swing_horizontal.value] is False
+        assert status[DeviceAttributes.eco_mode.value] is True
+        assert status[DeviceAttributes.dry.value] is True
+        assert status[DeviceAttributes.wind_ud_angle.value] == "up-mid"
+        assert status[DeviceAttributes.wind_lr_angle.value] == "right-mid"
+        assert status[DeviceAttributes.cool_hot_sense.value] is True
+        assert status[DeviceAttributes.power_saving.value] is True
+
+        other = self._make_device("220F4047", 1)
+        other_status = other.process_message(response)
+        assert DeviceAttributes.swing_vertical.value not in other_status
+        assert DeviceAttributes.swing_horizontal.value not in other_status
+        assert DeviceAttributes.eco_mode.value not in other_status
+        assert DeviceAttributes.dry.value not in other_status
+        assert DeviceAttributes.cool_hot_sense.value not in other_status
+        assert DeviceAttributes.power_saving.value not in other_status
 
     @pytest.mark.parametrize(
         ("mode", "toward", "avoid"),

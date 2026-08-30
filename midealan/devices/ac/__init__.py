@@ -103,6 +103,7 @@ class DeviceAttributes(StrEnum):
     indoor_temperature = "indoor_temperature"
     outdoor_temperature = "outdoor_temperature"
     indirect_wind = "indirect_wind"
+    cool_hot_sense = "cool_hot_sense"
     wind_straight = "wind_straight"
     wind_avoid = "wind_avoid"
     yb_wind_avoid = "yb_wind_avoid"
@@ -174,6 +175,7 @@ class ACModelCapabilities:
     has_light_sensitive_control: bool = False
     has_absolute_screen_display_control: bool = False
     has_new_mode_power_control: bool = False
+    has_220f4047_core_property_controls: bool = False
     c0_indoor_temperature_offset: int = C0_DEFAULT_TEMPERATURE_OFFSET
     c0_invalid_outdoor_temperature_values: frozenset[int] = (
         C0_DEFAULT_INVALID_OUTDOOR_TEMPERATURE_VALUES
@@ -189,11 +191,15 @@ AC_MODEL_CAPABILITIES = {
         attributes=frozenset(
             {
                 DeviceAttributes.comfort_sleep,
+                DeviceAttributes.cool_hot_sense,
                 DeviceAttributes.filter_level,
                 DeviceAttributes.filter_value,
                 DeviceAttributes.light_sensitive,
                 DeviceAttributes.nobody_energy_save,
                 DeviceAttributes.nobody_energy_save_tag,
+                DeviceAttributes.power_saving,
+                DeviceAttributes.wind_lr_angle,
+                DeviceAttributes.wind_ud_angle,
                 DeviceAttributes.wind_avoid,
                 DeviceAttributes.wind_straight,
                 DeviceAttributes.yb_wind_avoid,
@@ -215,6 +221,7 @@ AC_MODEL_CAPABILITIES = {
         has_light_sensitive_control=True,
         has_absolute_screen_display_control=True,
         has_new_mode_power_control=True,
+        has_220f4047_core_property_controls=True,
         c0_indoor_temperature_offset=0,
         c0_invalid_outdoor_temperature_values=frozenset(
             {MODEL_220F4047_C0_OUTDOOR_TEMPERATURE_PLACEHOLDER},
@@ -338,6 +345,7 @@ class MideaACDevice(MideaDevice):
                 DeviceAttributes.indoor_temperature: None,
                 DeviceAttributes.outdoor_temperature: None,
                 DeviceAttributes.indirect_wind: False,
+                DeviceAttributes.cool_hot_sense: False,
                 DeviceAttributes.indoor_humidity: None,
                 DeviceAttributes.breezeless: False,
                 DeviceAttributes.total_energy_consumption: None,
@@ -459,6 +467,9 @@ class MideaACDevice(MideaDevice):
             NewProtocolQuery(
                 self._message_protocol_version,
                 supports_rate_select=self._capabilities.get("rate_select", False),
+                supports_220f4047_core_properties=(
+                    self._model_capabilities.has_220f4047_core_property_controls
+                ),
             ),
             # Queried on its own so an empty response for the combined
             # new-protocol query does not suppress the self-clean state.
@@ -490,6 +501,9 @@ class MideaACDevice(MideaDevice):
             bytearray(msg),
             power_analysis_method=self._power_analysis_method,
             new_protocol_temperature=self._uses_new_protocol_temperature,
+            supports_220f4047_core_properties=(
+                self._model_capabilities.has_220f4047_core_property_controls
+            ),
             c0_indoor_temperature_offset=(
                 self._model_capabilities.c0_indoor_temperature_offset
             ),
@@ -852,6 +866,36 @@ class MideaACDevice(MideaDevice):
             fan_speed=fan_speed,
         )
 
+    def _make_220f4047_core_property_message_set(
+        self,
+        attr: str,
+        value: bool | float | str,
+    ) -> NewProtocolSet:
+        """Build one source-backed subtype-8 property command."""
+        message = NewProtocolSet(self._message_protocol_version)
+        if attr == DeviceAttributes.eco_mode:
+            message.eco_mode = bool(value)
+        elif attr == DeviceAttributes.dry:
+            message.dry = bool(value)
+        elif attr == DeviceAttributes.cool_hot_sense:
+            message.cool_hot_sense = bool(value)
+        elif attr == DeviceAttributes.power_saving:
+            message.power_saving = bool(value)
+        elif attr == DeviceAttributes.wind_lr_angle:
+            message.wind_deflector_lr = MideaACDevice.get_dict_key_by_value(
+                "_wind_lr_angles",
+                str(value),
+            )
+        elif attr == DeviceAttributes.wind_ud_angle:
+            message.wind_deflector_ud = MideaACDevice.get_dict_key_by_value(
+                "_wind_ud_angles",
+                str(value),
+            )
+        else:
+            raise ValueError(f"Unsupported 220F4047 core property: {attr}")
+        message.prompt_tone = self._attributes[DeviceAttributes.prompt_tone]
+        return message
+
     def make_subprotocol_message_set(self) -> MessageSubProtocolSet:
         """Midea AC device make subprotocol message set."""
         message = MessageSubProtocolSet(self._message_protocol_version)
@@ -1035,6 +1079,22 @@ class MideaACDevice(MideaDevice):
                 DeviceAttributes.fresh_air_exhaust_mode,
             }:
                 message = self.make_subprotocol_fresh_air_set(attr, value)
+            elif (
+                self._model_capabilities.has_220f4047_core_property_controls
+                and attr
+                in {
+                    DeviceAttributes.cool_hot_sense,
+                    DeviceAttributes.dry,
+                    DeviceAttributes.eco_mode,
+                    DeviceAttributes.power_saving,
+                    DeviceAttributes.wind_lr_angle,
+                    DeviceAttributes.wind_ud_angle,
+                }
+            ):
+                message = self._make_220f4047_core_property_message_set(
+                    attr,
+                    value,
+                )
             elif attr in [
                 DeviceAttributes.indirect_wind,
                 DeviceAttributes.breezeless,
@@ -1168,7 +1228,14 @@ class MideaACDevice(MideaDevice):
 
     def set_swing(self, swing_vertical: bool, swing_horizontal: bool) -> None:
         """Midea AC device set swing."""
-        message: MessageSubProtocolSet | MessageSet = self.make_message_uniq_set()
+        message: MessageSubProtocolSet | MessageSet | NewProtocolSet
+        if self._model_capabilities.has_220f4047_core_property_controls:
+            message = NewProtocolSet(self._message_protocol_version)
+            message.swing_vertical = swing_vertical
+            message.swing_horizontal = swing_horizontal
+            message.prompt_tone = self._attributes[DeviceAttributes.prompt_tone]
+        else:
+            message = self.make_message_uniq_set()
         if isinstance(message, MessageSet):
             message.swing_vertical = swing_vertical
             message.swing_horizontal = swing_horizontal

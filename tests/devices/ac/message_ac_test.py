@@ -6,6 +6,13 @@ from midealan.const import ProtocolVersion
 from midealan.crc8 import calculate
 from midealan.devices.ac.message import (
     A1_MIN_BODY_LENGTH,
+    MODEL_220F4047_COOL_HOT_SENSE_TAG,
+    MODEL_220F4047_DRY_TAG,
+    MODEL_220F4047_ECO_TAG,
+    MODEL_220F4047_POWER_SAVING_TAG,
+    MODEL_220F4047_SWING_LR_TAG,
+    MODEL_220F4047_SWING_UD_TAG,
+    MODEL_220F4047_WIND_DEFLECTOR_TAG,
     CapabilitiesQuery,
     CapabilityBody,
     GroupDataQuery,
@@ -395,6 +402,27 @@ class TestNewProtocolQuery:
 
         assert msg.body[:-2] == expected_body
 
+    def test_220f4047_query_uses_subtype_8_core_property_tags(self) -> None:
+        """The exact model replaces generic fixed-angle tags with live controls."""
+        message = NewProtocolQuery(
+            ProtocolVersion.V1,
+            supports_220f4047_core_properties=True,
+        )
+        body = message._body
+        params = [
+            body[index] | (body[index + 1] << 8) for index in range(1, len(body), 2)
+        ]
+
+        assert MODEL_220F4047_SWING_UD_TAG in params
+        assert MODEL_220F4047_SWING_LR_TAG in params
+        assert MODEL_220F4047_WIND_DEFLECTOR_TAG in params
+        assert MODEL_220F4047_ECO_TAG in params
+        assert MODEL_220F4047_DRY_TAG in params
+        assert MODEL_220F4047_COOL_HOT_SENSE_TAG in params
+        assert MODEL_220F4047_POWER_SAVING_TAG in params
+        assert params.count(MODEL_220F4047_SWING_LR_TAG) == 1
+        assert params.count(MODEL_220F4047_WIND_DEFLECTOR_TAG) == 1
+
 
 class TestNewProtocolSetOutSilent:
     """Test Message New Protocol Set for out_silent."""
@@ -504,6 +532,16 @@ class TestNewProtocolSetModelControls:
     @pytest.mark.parametrize(
         ("attribute", "tag", "value", "expected"),
         [
+            ("swing_vertical", MODEL_220F4047_SWING_UD_TAG, True, 0x03),
+            ("swing_vertical", MODEL_220F4047_SWING_UD_TAG, False, 0x00),
+            ("swing_horizontal", MODEL_220F4047_SWING_LR_TAG, True, 0x03),
+            ("swing_horizontal", MODEL_220F4047_SWING_LR_TAG, False, 0x00),
+            ("eco_mode", MODEL_220F4047_ECO_TAG, True, 0x01),
+            ("eco_mode", MODEL_220F4047_ECO_TAG, False, 0x00),
+            ("dry", MODEL_220F4047_DRY_TAG, True, 0x01),
+            ("dry", MODEL_220F4047_DRY_TAG, False, 0x00),
+            ("power_saving", MODEL_220F4047_POWER_SAVING_TAG, True, 0x01),
+            ("power_saving", MODEL_220F4047_POWER_SAVING_TAG, False, 0x00),
             ("wind_straight", NewProtocolTags.wind_straight, True, 0x01),
             ("wind_straight", NewProtocolTags.wind_straight, False, 0x00),
             ("wind_avoid", NewProtocolTags.wind_avoid, True, 0x01),
@@ -515,7 +553,7 @@ class TestNewProtocolSetModelControls:
     def test_single_property_payload(
         self,
         attribute: str,
-        tag: NewProtocolTags,
+        tag: int,
         value: bool | int,
         expected: int,
     ) -> None:
@@ -531,6 +569,49 @@ class TestNewProtocolSetModelControls:
         assert body[3] == tag >> 8
         assert body[4] == 0x01
         assert body[5] == expected
+
+    def test_220f4047_wind_deflector_payload_preserves_other_axis(self) -> None:
+        """A one-axis fixed direction write uses the Lua adapter's 0xFF marker."""
+        message = NewProtocolSet(protocol_version=ProtocolVersion.V1)
+        message.wind_deflector_ud = 25
+
+        assert message.body[1:7] == bytearray(
+            [
+                0x01,
+                MODEL_220F4047_WIND_DEFLECTOR_TAG,
+                0x00,
+                0x02,
+                25,
+                0xFF,
+            ],
+        )
+
+    @pytest.mark.parametrize(("enabled", "expected"), [(True, 1), (False, 0)])
+    def test_220f4047_cool_hot_sense_payload(
+        self,
+        enabled: bool,
+        expected: int,
+    ) -> None:
+        """Smart temperature control carries its required eight-byte payload."""
+        message = NewProtocolSet(protocol_version=ProtocolVersion.V1)
+        message.cool_hot_sense = enabled
+
+        assert message.body[1:13] == bytearray(
+            [
+                0x01,
+                MODEL_220F4047_COOL_HOT_SENSE_TAG,
+                0x00,
+                0x08,
+                expected,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+            ],
+        )
 
     def test_person_airflow_payload_is_atomic(self) -> None:
         """One message disables the opposite mode while enabling the selected one."""
@@ -863,7 +944,7 @@ class TestMessageACResponse:
 
     @staticmethod
     def _properties_body(
-        *properties: tuple[NewProtocolTags, bytes | bytearray],
+        *properties: tuple[int, bytes | bytearray],
     ) -> bytearray:
         """Build a B1 response body with five-byte property headers."""
         body = bytearray([0xB1, len(properties)])
@@ -2005,6 +2086,33 @@ class TestMessageACResponse:
         assert parsed["light_sensitive"] == 1
         assert parsed["filter_level"] == 2
         assert parsed["filter_value"] == 53
+
+    def test_message_b1_220f4047_core_property_states(self) -> None:
+        """Decode live subtype-8 swing, ECO and post-run drying state."""
+        self.header[9] = 0x03
+        body = self._properties_body(
+            (MODEL_220F4047_SWING_UD_TAG, bytes([0x03])),
+            (MODEL_220F4047_SWING_LR_TAG, bytes([0x00])),
+            (MODEL_220F4047_WIND_DEFLECTOR_TAG, bytes([25, 75])),
+            (MODEL_220F4047_ECO_TAG, bytes([0x01])),
+            (MODEL_220F4047_DRY_TAG, bytes([0x00])),
+            (MODEL_220F4047_COOL_HOT_SENSE_TAG, bytes([0x01, *([0x00] * 7)])),
+            (MODEL_220F4047_POWER_SAVING_TAG, bytes([0x01])),
+        )
+
+        response = MessageACResponse(
+            self.header + body,
+            supports_220f4047_core_properties=True,
+        )
+
+        assert response.swing_vertical is True  # type: ignore[attr-defined]
+        assert response.swing_horizontal is False  # type: ignore[attr-defined]
+        assert response.eco_mode is True  # type: ignore[attr-defined]
+        assert response.dry is False  # type: ignore[attr-defined]
+        assert response.wind_ud_angle == 25  # type: ignore[attr-defined]
+        assert response.wind_lr_angle == 75  # type: ignore[attr-defined]
+        assert response.cool_hot_sense is True  # type: ignore[attr-defined]
+        assert response.power_saving is True  # type: ignore[attr-defined]
 
     def test_message_b1_filter_short_payload_is_ignored(self) -> None:
         """Test a truncated filter payload cannot publish shifted values."""
